@@ -15,8 +15,11 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Dual-window output**
   - Experimenter View: full annotated feed with bounding boxes and FPS
   - Participant View: configurable overlay with three modes (raw frame / black + gradient box / frame + gradient box)
-- **Draggable gradient box** — drag the shaded reference box horizontally in the Participant View; double-click to reset
+- **Draggable gradient box** — drag the shaded reference box horizontally in both the Participant View and the Experimenter View; the two views stay in sync; double-click to reset
+- **Box overlay on experimenter view** — optional checkbox mirrors the gradient box onto the main display
 - **Adjustable shading** — control box width, opacity range, and number of shading steps
+- **Swallow marking** — one-click toggle to record tracker trajectories for each swallow event; completed trails are drawn on the Participant View in distinct colors, with the active trial shown in white
+- **Configurable trail history** — choose how many past swallow trajectories to display (1–20)
 - **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
 - **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`
 
@@ -53,10 +56,11 @@ python Scripts/muti_tracker_with_overlay_2.py
    - `1` — mirrored frame only
    - `2` — black background with stepped-gradient reference box + tracker dots
    - `3` — frame background with reference box + tracker dots
-5. Check **Move Box** to drag the reference box horizontally in the Participant View (double-click to reset)
+5. Check **Move Box** to drag the reference box horizontally in either view (double-click to reset); enable **Show box on main view** to mirror it on the Experimenter View
 6. Click **Adjust Shaded Box Width** or **Box Shading** to fine-tune the overlay appearance
-7. **Manual Reinit** — select a tracker from the dropdown and draw a new ROI to reset it
-8. **Export CSV** — save all tracking data to a `.csv` file
+7. **Swallow Marking** — click **Mark Swallow Start** when a swallow begins, then **Mark Swallow End** when it finishes; the trajectory is saved and drawn on the Participant View; use the **Show last N** spinner to control how many past swallows are displayed
+8. **Manual Reinit** — select a tracker from the dropdown and draw a new ROI to reset it
+9. **Export CSV** — save all tracking data to a `.csv` file
 
 ---
 
