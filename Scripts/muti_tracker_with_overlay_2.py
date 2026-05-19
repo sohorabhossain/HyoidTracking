@@ -78,6 +78,8 @@ def centered_search_region(roi, frame_w, frame_h, area_fraction=0.25):
 # Drawable QLabel for GUI ROI drawing
 # ----------------------------
 class DrawableLabel(QLabel):
+    box_offset_changed = Signal(int)  # emits absolute box_x_offset in secondary-image coords
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap = None
@@ -88,10 +90,30 @@ class DrawableLabel(QLabel):
         self.temp_rect = None
         self.setMouseTracking(True)
         self.draw_mode = False
+        # box drag state
+        self._box_drag_mode = False
+        self._box_drag_start_x = None
+        self._box_drag_start_offset = 0
+        self._box_current_offset = 0
+        self._pix_w = 1   # width of last displayed pixmap (for coord mapping)
+        self._sec_w = 1   # secondary image width (for coord mapping)
 
     def setPixmap(self, pixmap: QPixmap):
         super().setPixmap(pixmap)
         self._pixmap = pixmap
+        self._pix_w = max(1, pixmap.width())
+
+    def set_box_drag_mode(self, enabled: bool):
+        self._box_drag_mode = enabled
+        self.setCursor(Qt.SizeHorCursor if enabled else Qt.ArrowCursor)
+
+    def set_sec_w(self, w: int):
+        self._sec_w = max(1, w)
+
+    def sync_offset(self, offset: int):
+        """Update local offset from an external source without re-emitting."""
+        self._box_current_offset = offset
+        self._box_drag_start_offset = offset
 
     def enter_draw_mode(self):
         self.draw_mode = True
@@ -105,6 +127,10 @@ class DrawableLabel(QLabel):
         self.update()
 
     def mousePressEvent(self, event):
+        if self._box_drag_mode and event.button() == Qt.LeftButton:
+            self._box_drag_start_x = event.pos().x()
+            self._box_drag_start_offset = self._box_current_offset
+            return
         if not self.draw_mode:
             return
         if event.button() == Qt.LeftButton:
@@ -115,6 +141,12 @@ class DrawableLabel(QLabel):
             self.update()
 
     def mouseMoveEvent(self, event):
+        if self._box_drag_mode and self._box_drag_start_x is not None:
+            dx = event.pos().x() - self._box_drag_start_x
+            dx_image = int(dx * self._sec_w / self._pix_w)
+            self._box_current_offset = self._box_drag_start_offset + dx_image
+            self.box_offset_changed.emit(self._box_current_offset)
+            return
         if not self.draw_mode:
             return
         if self.drawing:
@@ -123,6 +155,9 @@ class DrawableLabel(QLabel):
             self.update()
 
     def mouseReleaseEvent(self, event):
+        if self._box_drag_mode and event.button() == Qt.LeftButton:
+            self._box_drag_start_x = None
+            return
         if not self.draw_mode:
             return
         if event.button() == Qt.LeftButton and self.drawing:
@@ -133,6 +168,12 @@ class DrawableLabel(QLabel):
                 self.rects.append(rect)
             self.temp_rect = None
             self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if self._box_drag_mode and event.button() == Qt.LeftButton:
+            self._box_current_offset = 0
+            self._box_drag_start_offset = 0
+            self.box_offset_changed.emit(0)
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -228,18 +269,21 @@ class ScreenRegionSelector(QWidget):
 # Secondary window (half-size image)
 # ----------------------------
 class SecondaryWindow(QWidget):
-    box_offset_changed = Signal(int)  # emits absolute box_x_offset in image coords
+    box_offset_changed = Signal(int)   # emits absolute box_x_offset in image coords
+    size_changed = Signal(int, int)    # emits (w, h) whenever the window is resized
 
     def __init__(self, width=320, height=240):
         super().__init__()
         self.setWindowTitle("Participant View")
         self.move(1020, 30)
         self.label = QLabel()
-        self.label.setFixedSize(width, height)
+        self.label.setMinimumSize(80, 60)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.label)
         self.setLayout(layout)
+        self.resize(width, height)
         self.mode = 1  # 1=copy frame,2=black+line+circles,3=frame+line+circles
         self._drag_mode = False
         self._drag_start_x = None
@@ -248,8 +292,11 @@ class SecondaryWindow(QWidget):
         self._image_w = 1  # last received image width for coord mapping
         self.setMouseTracking(True)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.size_changed.emit(event.size().width(), event.size().height())
+
     def update_image(self, qt_img):
-        """Receive a QImage and display it."""
         self._image_w = max(1, qt_img.width())
         pix = QPixmap.fromImage(qt_img)
         pix = pix.scaled(self.label.size(), Qt.KeepAspectRatio)
@@ -259,8 +306,7 @@ class SecondaryWindow(QWidget):
         self.mode = int(m)
 
     def set_size(self, w, h):
-        self.label.setFixedSize(int(w), int(h))
-        self.adjustSize()
+        self.resize(int(w), int(h))
 
     def set_drag_mode(self, enabled: bool):
         self._drag_mode = enabled
@@ -270,6 +316,11 @@ class SecondaryWindow(QWidget):
         self._current_offset = 0
         self._drag_start_offset = 0
         self.box_offset_changed.emit(0)
+
+    def sync_offset(self, offset: int):
+        """Update local offset from an external source without re-emitting."""
+        self._current_offset = offset
+        self._drag_start_offset = offset
 
     def mousePressEvent(self, event):
         if self._drag_mode and event.button() == Qt.LeftButton:
@@ -353,6 +404,9 @@ class VideoThread(QThread):
         self.box_alpha_max = 0.80
         self.box_alpha_min = 0.20
         self.box_num_shades = 5
+        # target secondary image size — updated via set_secondary_size when window resizes
+        self.secondary_img_w = 320
+        self.secondary_img_h = 240
 
         # writer
         self.video_writer = None
@@ -542,8 +596,8 @@ class VideoThread(QThread):
         tracker_centers: list of (cx,cy) in processed-frame coords
         """
         h, w = frame.shape[:2]
-        half_w = max(1, w // 2)
-        half_h = max(1, h // 2)
+        half_w = max(1, self.secondary_img_w)
+        half_h = max(1, self.secondary_img_h)
         mode = int(self.secondary_mode)
         # Option 1: copy resized frame scaled to half
         if mode == 1:
@@ -886,6 +940,11 @@ class VideoThread(QThread):
     def set_box_num_shades(self, n: int):
         self.box_num_shades = max(5, min(50, n))
 
+    @Slot(int, int)
+    def set_secondary_size(self, w: int, h: int):
+        self.secondary_img_w = max(1, w)
+        self.secondary_img_h = max(1, h)
+
 # ----------------------------
 # MainWindow with slider + SecondaryWindow
 # ----------------------------
@@ -986,7 +1045,16 @@ class MainWindow(QWidget):
         # secondary window initial size half of placeholder
         self.secondary = SecondaryWindow(width=self.display_w//2, height=self.display_h//2)
         self.secondary.box_offset_changed.connect(self.worker.set_box_offset)
+        self.secondary.size_changed.connect(self.worker.set_secondary_size)
+        self.secondary.size_changed.connect(lambda w, _h: self.image_label.set_sec_w(w))
         self.secondary.show()
+        # seed worker and image_label with the initial secondary window size
+        self.worker.set_secondary_size(self.secondary.width(), self.secondary.height())
+        self.image_label.set_sec_w(self.secondary.width())
+        # keep both views' local offsets in sync when either one drags the box
+        self.image_label.box_offset_changed.connect(self.worker.set_box_offset)
+        self.image_label.box_offset_changed.connect(self.secondary.sync_offset)
+        self.secondary.box_offset_changed.connect(self.image_label.sync_offset)
 
         # manual override flag
         self.secondary_manual_override = False
@@ -1218,13 +1286,11 @@ class MainWindow(QWidget):
         if self.chk_show_box_main.isChecked() and int(self.worker.secondary_mode) in (2, 3):
             disp_w = pix.width()
             disp_h = pix.height()
-            # half_w is the secondary-image width; box coords were computed in that space
-            half_w = max(1, qt_img.width() // 2)
-            scale = disp_w / qt_img.width()  # display vs. original frame scale
+            sec_w = max(1, self.worker.secondary_img_w)
 
             main_box_w = max(1, int(disp_w * self.worker.box_width_fraction))
             main_xmid = disp_w // 2
-            main_offset = int(self.worker.box_x_offset * disp_w / half_w)
+            main_offset = int(self.worker.box_x_offset * disp_w / sec_w)
             main_box_x = max(0, min(disp_w - main_box_w,
                                     int(main_xmid - main_box_w / 2) + main_offset))
 
@@ -1286,6 +1352,7 @@ class MainWindow(QWidget):
     def on_move_box_toggled(self, checked: bool):
         if self.secondary:
             self.secondary.set_drag_mode(checked)
+        self.image_label.set_box_drag_mode(checked)
 
     @Slot()
     def on_box_width_clicked(self):
