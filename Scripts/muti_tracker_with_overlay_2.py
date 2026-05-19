@@ -448,6 +448,9 @@ class VideoThread(QThread):
         self.show_swallow_trails = True   # whether to render trajectories
         self.zoom_participant = False     # zoom participant view around the gradient box
         self.zoom_region = None          # None = auto; (x,y,w,h) in secondary-image coords = manual
+        # mode-4 strength meter
+        self.last_swallow_excursion = 0.0   # horizontal range of last completed swallow (frame px)
+        self.strength_scale_max = 200.0     # top of scale (frame px); auto-expands
 
         # writer
         self.video_writer = None
@@ -678,7 +681,7 @@ class VideoThread(QThread):
                 sx = int(cx * half_w / float(w))
                 sy = int(cy * half_h / float(h))
                 cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
-        else:  # mode 3: frame background + gradient box + circles
+        elif mode == 3:  # frame background + gradient box + circles
             sec = cv2.resize(frame, (half_w, half_h))
             xmid = half_w // 2
             box_w = max(1, int(half_w * self.box_width_fraction))
@@ -699,8 +702,106 @@ class VideoThread(QThread):
                 sx = int(cx * half_w / float(w))
                 sy = int(cy * half_h / float(h))
                 cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
-        # draw swallow trajectories over secondary image
-        if self.show_swallow_trails:
+        elif mode == 4:  # swallow strength meter
+            sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
+            # --- current excursion to display ---
+            if self.swallow_active and self.current_swallow_trail:
+                _all_cx = [_pt[0] for _fpts in self.current_swallow_trail for _pt in _fpts]
+                _cur_exc = float(max(_all_cx) - min(_all_cx)) if len(_all_cx) >= 2 else 0.0
+            else:
+                _cur_exc = self.last_swallow_excursion
+            _scale_max = max(1.0, self.strength_scale_max)
+            _ratio = min(1.0, _cur_exc / _scale_max)
+
+            # --- layout ---
+            _bar_cx   = int(half_w * 0.38)          # horizontal centre of bar
+            _bar_w_px = max(6, int(half_w * 0.14))  # bar width
+            _bar_x    = _bar_cx - _bar_w_px // 2
+            _bar_top  = int(half_h * 0.12)
+            _bar_bot  = int(half_h * 0.84)
+            _bar_h    = max(1, _bar_bot - _bar_top)
+
+            # --- draw full gradient background of bar (green→yellow→red bottom→top) ---
+            _full_ys = np.linspace(0.0, 1.0, _bar_h, dtype=np.float32)  # 0=bottom,1=top
+            _bar_B = np.zeros(_bar_h, dtype=np.uint8)
+            _bar_G = np.where(_full_ys < 0.5,
+                              200,
+                              np.clip(200 - (_full_ys - 0.5) * 400, 0, 200)).astype(np.uint8)
+            _bar_R = np.where(_full_ys < 0.5,
+                              np.clip(_full_ys * 400, 0, 200),
+                              200).astype(np.uint8)
+            _bar_colors = np.stack([_bar_B, _bar_G, _bar_R], axis=1)  # (H,3)
+            # flip so row-0 of array = bar_top = high value (red)
+            _bar_colors = _bar_colors[::-1]
+            _needle_row = int((1.0 - _ratio) * _bar_h)  # row index of needle within bar
+            # dim the unfilled portion above the needle
+            _bar_colors[:_needle_row] = (_bar_colors[:_needle_row] // 5)
+            _bar_slice = sec[_bar_top:_bar_bot, _bar_x + 1:_bar_x + _bar_w_px - 1]
+            _bar_slice[:] = _bar_colors[:, np.newaxis, :]
+
+            # --- bar outline ---
+            cv2.rectangle(sec, (_bar_x, _bar_top), (_bar_x + _bar_w_px, _bar_bot),
+                          (160, 160, 160), 1)
+
+            # --- needle (white horizontal line + small side triangles) ---
+            _needle_y = _bar_top + _needle_row
+            _nx1, _nx2 = _bar_x - 14, _bar_x + _bar_w_px + 14
+            cv2.line(sec, (_nx1, _needle_y), (_nx2, _needle_y), (255, 255, 255), 3)
+            # left pointer triangle
+            pts_l = np.array([[_bar_x - 2, _needle_y],
+                               [_bar_x - 14, _needle_y - 6],
+                               [_bar_x - 14, _needle_y + 6]], np.int32)
+            cv2.fillPoly(sec, [pts_l], (255, 255, 255))
+            # right pointer triangle
+            pts_r = np.array([[_bar_x + _bar_w_px + 2, _needle_y],
+                               [_bar_x + _bar_w_px + 14, _needle_y - 6],
+                               [_bar_x + _bar_w_px + 14, _needle_y + 6]], np.int32)
+            cv2.fillPoly(sec, [pts_r], (255, 255, 255))
+
+            # --- scale ticks and labels (right of bar) ---
+            _tick_x  = _bar_x + _bar_w_px + 2
+            _lbl_x   = _tick_x + 10
+            _font_sc = max(0.25, half_h / 900)
+            for _pct in [0, 25, 50, 75, 100]:
+                _ty = int(_bar_bot - (_pct / 100.0) * _bar_h)
+                cv2.line(sec, (_tick_x, _ty), (_tick_x + 7, _ty), (180, 180, 180), 1)
+                cv2.putText(sec, f"{_pct / 100.0 * _scale_max:.0f}",
+                            (_lbl_x, _ty + 4), cv2.FONT_HERSHEY_SIMPLEX,
+                            _font_sc, (180, 180, 180), 1)
+
+            # --- previous swallow markers on left of bar ---
+            _prev_excs = []
+            for _tr in self.swallow_trails:
+                _cxs = [_pt[0] for _fp in _tr for _pt in _fp]
+                if len(_cxs) >= 2:
+                    _prev_excs.append(float(max(_cxs) - min(_cxs)))
+            for _pi, _pexc in enumerate(_prev_excs):
+                _pr = min(1.0, _pexc / _scale_max)
+                _py = int(_bar_bot - _pr * _bar_h)
+                _dim = max(60, 220 - _pi * 50)
+                cv2.line(sec, (_bar_x - 18, _py), (_bar_x - 3, _py), (_dim, _dim, _dim), 2)
+
+            # --- title and labels ---
+            _title_x = max(4, _bar_x - int(half_w * 0.15))
+            cv2.putText(sec, "SWALLOW", (_title_x, _bar_top - 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
+            cv2.putText(sec, "STRENGTH", (_title_x, _bar_top - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
+            cv2.putText(sec, f"{_cur_exc:.1f} px",
+                        (_bar_x, _bar_bot + int(half_h * 0.055)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.1, (255, 255, 255), 1)
+            cv2.putText(sec, f"Swallows: {self.swallow_count}",
+                        (int(half_w * 0.55), int(half_h * 0.94)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc, (200, 200, 200), 1)
+            if self.swallow_active:
+                cv2.putText(sec, "LIVE",
+                            (int(half_w * 0.72), _bar_top + int(half_h * 0.04)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.4, (0, 80, 255), 2)
+        else:
+            sec = cv2.resize(frame, (half_w, half_h))
+
+        # draw swallow trajectories over secondary image (modes 1-3 only)
+        if self.show_swallow_trails and mode in (1, 2, 3):
             _trail_palette = [
                 (0, 140, 255), (255, 0, 255), (0, 255, 255), (255, 215, 0),
                 (255, 100, 0), (100, 255, 50), (180, 0, 180), (0, 200, 150),
@@ -728,8 +829,8 @@ class VideoThread(QThread):
                                int(_curr[_ti][1] * half_h / float(h)))
                         cv2.line(sec, _p1, _p2, (255, 255, 255), 2)
 
-        # zoom into the region around the gradient box if enabled
-        if self.zoom_participant:
+        # zoom into the region around the gradient box if enabled (modes 1-3 only)
+        if self.zoom_participant and mode in (1, 2, 3):
             if self.zoom_region is not None:
                 _zx, _zy, _zw, _zh = self.zoom_region
                 _zx = min(_zx, half_w - 1)
@@ -1065,6 +1166,12 @@ class VideoThread(QThread):
             self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
             self.swallow_count += 1
             self.swallow_count_changed.emit(self.swallow_count)
+            # compute horizontal excursion for mode-4 strength meter
+            _all_cx = [_pt[0] for _fpts in self.current_swallow_trail for _pt in _fpts]
+            if len(_all_cx) >= 2:
+                self.last_swallow_excursion = float(max(_all_cx) - min(_all_cx))
+                if self.last_swallow_excursion > self.strength_scale_max:
+                    self.strength_scale_max = self.last_swallow_excursion * 1.2
         self.current_swallow_trail = []
 
     @Slot(int)
@@ -1118,10 +1225,10 @@ class MainWindow(QWidget):
         self.btn_exit = QPushButton("Exit")
 
         # Slider for secondary mode (1..3)
-        self.slider_label = QLabel("Overlay mode: 1")
+        self.slider_label = QLabel("Mode 1: Copy")
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(1)
-        self.slider.setMaximum(3)
+        self.slider.setMaximum(4)
         self.slider.setValue(1)
         self.slider.setTickPosition(QSlider.TicksBelow)
         self.slider.setTickInterval(1)
@@ -1273,7 +1380,7 @@ class MainWindow(QWidget):
         # ensure worker.secondary_mode starts as 1 (copy) until tracking starts
         self.worker.secondary_mode = 1
         self.slider.setValue(1)
-        self.slider_label.setText("Overlay mode: 1")
+        self.slider_label.setText("Mode 1: Copy")
 
     @Slot()
     def on_load(self):
@@ -1334,7 +1441,7 @@ class MainWindow(QWidget):
                 self.worker.secondary_mode = 1
                 self.slider.blockSignals(True)
                 self.slider.setValue(1)
-                self.slider_label.setText("Overlay mode: 1")
+                self.slider_label.setText("Mode 1: Copy")
                 self.slider.blockSignals(False)
         except Exception as e:
             self.show()
@@ -1420,7 +1527,7 @@ class MainWindow(QWidget):
             self.worker.secondary_mode = 3
             self.slider.blockSignals(True)
             self.slider.setValue(3)
-            self.slider_label.setText("Overlay mode: 3")
+            self.slider_label.setText("Mode 3: Frame+Box")
             self.slider.blockSignals(False)
         if not self.worker.isRunning():
             self.worker.start()
@@ -1589,7 +1696,8 @@ class MainWindow(QWidget):
         # user moved slider -> manual override enabled
         self.secondary_manual_override = True
         v = int(v)
-        self.slider_label.setText(f"Overlay mode: {v}")
+        _names = {1: "Copy", 2: "Black+Box", 3: "Frame+Box", 4: "Strength Meter"}
+        self.slider_label.setText(f"Mode {v}: {_names.get(v, '')}")
         self.worker.secondary_mode = v
         self.worker.secondary_manual_override = True
         # update secondary window mode
