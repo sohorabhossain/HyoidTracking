@@ -351,6 +351,7 @@ class VideoThread(QThread):
     change_secondary = Signal(QImage)  # secondary window display
     status_msg = Signal(str)
     finished_processing = Signal()
+    swallow_count_changed = Signal(int)  # emits updated swallow count
 
     def __init__(self):
         super().__init__()
@@ -407,6 +408,12 @@ class VideoThread(QThread):
         # target secondary image size — updated via set_secondary_size when window resizes
         self.secondary_img_w = 320
         self.secondary_img_h = 240
+        # swallow tracking
+        self.swallow_active = False
+        self.current_swallow_trail = []   # [(cx,cy),...] per frame while recording
+        self.swallow_trails = []          # list of completed swallow trails
+        self.swallow_count = 0
+        self.n_swallow_display = 3        # how many recent swallows to show
 
         # writer
         self.video_writer = None
