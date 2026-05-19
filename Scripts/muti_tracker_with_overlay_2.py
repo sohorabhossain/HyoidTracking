@@ -414,6 +414,7 @@ class VideoThread(QThread):
         self.swallow_trails = []          # list of completed swallow trails
         self.swallow_count = 0
         self.n_swallow_display = 3        # how many recent swallows to show
+        self.show_swallow_trails = True   # whether to render trajectories
 
         # writer
         self.video_writer = None
@@ -653,6 +654,13 @@ class VideoThread(QThread):
                 sy = int(cy * half_h / float(h))
                 cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
         # draw swallow trajectories over secondary image
+        if not self.show_swallow_trails:
+            rgb = cv2.cvtColor(sec, cv2.COLOR_BGR2RGB)
+            h2, w2, ch = rgb.shape
+            bytes_per_line = ch * w2
+            qt_img = QImage(rgb.data, w2, h2, bytes_per_line, QImage.Format_RGB888).copy()
+            self.change_secondary.emit(qt_img)
+            return
         _trail_palette = [
             (0, 140, 255), (255, 0, 255), (0, 255, 255), (255, 215, 0),
             (255, 100, 0), (100, 255, 50), (180, 0, 180), (0, 200, 150),
@@ -1006,6 +1014,10 @@ class VideoThread(QThread):
         self.n_swallow_display = max(1, n)
         self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
 
+    @Slot(bool)
+    def set_show_swallow_trails(self, enabled: bool):
+        self.show_swallow_trails = bool(enabled)
+
 # ----------------------------
 # MainWindow with slider + SecondaryWindow
 # ----------------------------
@@ -1074,6 +1086,8 @@ class MainWindow(QWidget):
         self.spin_swallow_n.setMaximum(20)
         self.spin_swallow_n.setValue(3)
         swallow_n_row.addWidget(self.spin_swallow_n)
+        self.chk_show_trails = QCheckBox("Show swallow trajectories")
+        self.chk_show_trails.setChecked(True)
 
         # layout
         vbox = QVBoxLayout()
@@ -1097,6 +1111,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.btn_swallow)
         vbox.addWidget(self.lbl_swallow_count)
         vbox.addLayout(swallow_n_row)
+        vbox.addWidget(self.chk_show_trails)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Manual Reinit:"))
         vbox.addWidget(self.combo_reinit)
@@ -1154,6 +1169,7 @@ class MainWindow(QWidget):
         self.btn_box_shading.clicked.connect(self.on_box_shading_clicked)
         self.btn_swallow.toggled.connect(self.on_swallow_toggled)
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
+        self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
         self.worker.swallow_count_changed.connect(
             lambda n: self.lbl_swallow_count.setText(f"Swallows: {n}")
         )
@@ -1366,29 +1382,70 @@ class MainWindow(QWidget):
     def on_frame(self, qt_img):
         pix = QPixmap.fromImage(qt_img)
         pix = pix.scaled(self.image_label.size(), Qt.KeepAspectRatio)
+        disp_w = pix.width()
+        disp_h = pix.height()
+        img_w = max(1, qt_img.width())
+        img_h = max(1, qt_img.height())
 
-        if self.chk_show_box_main.isChecked() and int(self.worker.secondary_mode) in (2, 3):
-            disp_w = pix.width()
-            disp_h = pix.height()
-            sec_w = max(1, self.worker.secondary_img_w)
-
-            main_box_w = max(1, int(disp_w * self.worker.box_width_fraction))
-            main_xmid = disp_w // 2
-            main_offset = int(self.worker.box_x_offset * disp_w / sec_w)
-            main_box_x = max(0, min(disp_w - main_box_w,
-                                    int(main_xmid - main_box_w / 2) + main_offset))
-
-            n = self.worker.box_num_shades
-            a_max = self.worker.box_alpha_max
-            step = (a_max - self.worker.box_alpha_min) / n
-            green = QColor(0, 255, 0)
-
+        need_painter = (
+            (self.chk_show_box_main.isChecked() and int(self.worker.secondary_mode) in (2, 3))
+            or self.chk_show_trails.isChecked()
+        )
+        if need_painter:
             painter = QPainter(pix)
-            for i in range(n):
-                seg_x = main_box_x + int(i * main_box_w / n)
-                seg_w = int((i + 1) * main_box_w / n) - int(i * main_box_w / n)
-                painter.setOpacity(a_max - i * step)
-                painter.fillRect(seg_x, 0, seg_w, disp_h, green)
+
+            if self.chk_show_box_main.isChecked() and int(self.worker.secondary_mode) in (2, 3):
+                sec_w = max(1, self.worker.secondary_img_w)
+                main_box_w = max(1, int(disp_w * self.worker.box_width_fraction))
+                main_xmid = disp_w // 2
+                main_offset = int(self.worker.box_x_offset * disp_w / sec_w)
+                main_box_x = max(0, min(disp_w - main_box_w,
+                                        int(main_xmid - main_box_w / 2) + main_offset))
+                n = self.worker.box_num_shades
+                a_max = self.worker.box_alpha_max
+                step = (a_max - self.worker.box_alpha_min) / n
+                green = QColor(0, 255, 0)
+                for i in range(n):
+                    seg_x = main_box_x + int(i * main_box_w / n)
+                    seg_w = int((i + 1) * main_box_w / n) - int(i * main_box_w / n)
+                    painter.setOpacity(a_max - i * step)
+                    painter.fillRect(seg_x, 0, seg_w, disp_h, green)
+
+            if self.chk_show_trails.isChecked():
+                _trail_palette = [
+                    QColor(255, 140, 0), QColor(255, 0, 255), QColor(0, 255, 255),
+                    QColor(255, 215, 0), QColor(255, 100, 0), QColor(100, 255, 50),
+                    QColor(180, 0, 180), QColor(0, 200, 150), QColor(255, 50, 50),
+                    QColor(50, 150, 255),
+                ]
+                painter.setOpacity(1.0)
+                n_disp = self.worker.n_swallow_display
+                trails_snap = self.worker.swallow_trails[-n_disp:]
+                for _si, _trail in enumerate(trails_snap):
+                    col = _trail_palette[_si % len(_trail_palette)]
+                    pen = QPen(col, 2)
+                    painter.setPen(pen)
+                    for _fi in range(1, len(_trail)):
+                        _prev, _curr = _trail[_fi - 1], _trail[_fi]
+                        for _ti in range(min(len(_prev), len(_curr))):
+                            x1 = int(_prev[_ti][0] * disp_w / img_w)
+                            y1 = int(_prev[_ti][1] * disp_h / img_h)
+                            x2 = int(_curr[_ti][0] * disp_w / img_w)
+                            y2 = int(_curr[_ti][1] * disp_h / img_h)
+                            painter.drawLine(x1, y1, x2, y2)
+                if self.worker.swallow_active and len(self.worker.current_swallow_trail) > 1:
+                    pen = QPen(QColor(255, 255, 255), 2)
+                    painter.setPen(pen)
+                    trail = self.worker.current_swallow_trail
+                    for _fi in range(1, len(trail)):
+                        _prev, _curr = trail[_fi - 1], trail[_fi]
+                        for _ti in range(min(len(_prev), len(_curr))):
+                            x1 = int(_prev[_ti][0] * disp_w / img_w)
+                            y1 = int(_prev[_ti][1] * disp_h / img_h)
+                            x2 = int(_curr[_ti][0] * disp_w / img_w)
+                            y2 = int(_curr[_ti][1] * disp_h / img_h)
+                            painter.drawLine(x1, y1, x2, y2)
+
             painter.end()
 
         self.image_label.setPixmap(pix)
