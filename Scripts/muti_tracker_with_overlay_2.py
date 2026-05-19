@@ -14,6 +14,32 @@ from PySide6.QtWidgets import (
 )
 
 # ----------------------------
+# Multi-monitor screen grab helper
+# ----------------------------
+def _grab_all_screens():
+    """Composite all connected screens into one pixmap spanning the virtual desktop.
+    Returns (composite_pixmap, vdesktop_rect) in logical pixel coordinates,
+    or (None, None) if no screens are available.
+    """
+    screens = QGuiApplication.screens()
+    if not screens:
+        return None, None
+    vdesktop = screens[0].geometry()
+    for s in screens[1:]:
+        vdesktop = vdesktop.united(s.geometry())
+    composite = QPixmap(vdesktop.width(), vdesktop.height())
+    composite.fill(Qt.black)
+    p = QPainter(composite)
+    for s in screens:
+        pix = s.grabWindow(0)
+        if not pix.isNull():
+            sg = s.geometry()
+            dst = QRect(sg.x() - vdesktop.x(), sg.y() - vdesktop.y(), sg.width(), sg.height())
+            p.drawPixmap(dst, pix)
+    p.end()
+    return composite, vdesktop
+
+# ----------------------------
 # Utility functions
 # ----------------------------
 def create_kalman_from_roi(roi, dt=1.0):
@@ -455,19 +481,32 @@ class VideoThread(QThread):
         if self.capture_region is None:
             return None
         x, y, w, h = self.capture_region
-        screen = QGuiApplication.primaryScreen()
+        # Find the screen with the largest intersection with the capture region.
+        # This allows captures on secondary/USB/WiFi monitors.
+        cap_rect = QRect(x, y, w, h)
+        screen = None
+        best_area = 0
+        for s in QGuiApplication.screens():
+            inter = s.geometry().intersected(cap_rect)
+            area = inter.width() * inter.height()
+            if area > best_area:
+                best_area = area
+                screen = s
+        if screen is None:
+            screen = QGuiApplication.primaryScreen()
         if screen is None:
             return None
-        # Grab full screen then crop to avoid DPI coordinate mismatches with
-        # grabWindow's explicit-coordinate variant on Windows.
+        sg = screen.geometry()
+        # Grab that screen and map the capture region into its local coordinates.
         full_pixmap = screen.grabWindow(0)
         if full_pixmap.isNull():
             return None
-        geo = screen.geometry()
-        sx = full_pixmap.width() / max(1, geo.width())
-        sy = full_pixmap.height() / max(1, geo.height())
+        sx = full_pixmap.width() / max(1, sg.width())
+        sy = full_pixmap.height() / max(1, sg.height())
+        local_x = x - sg.x()
+        local_y = y - sg.y()
         pixmap = full_pixmap.copy(
-            int(x * sx), int(y * sy),
+            int(local_x * sx), int(local_y * sy),
             max(1, int(w * sx)), max(1, int(h * sy)),
         )
         if pixmap.isNull():
@@ -1185,17 +1224,21 @@ class MainWindow(QWidget):
 
     @Slot()
     def on_load(self):
-        screen = QGuiApplication.primaryScreen()
-        if screen is None:
+        if not QGuiApplication.screens():
             QMessageBox.critical(self, "Error", "No screen is available for capture")
             return
         try:
             self.hide()
             QApplication.processEvents()
             time.sleep(0.05)
-            screenshot = screen.grabWindow(0)
-            selector = ScreenRegionSelector(screenshot, screen.geometry())
-            selector.showFullScreen()
+            screenshot, vdesktop = _grab_all_screens()
+            if screenshot is None:
+                self.show()
+                QMessageBox.critical(self, "Error", "Could not grab any screen")
+                return
+            selector = ScreenRegionSelector(screenshot, vdesktop)
+            selector.show()
+            selector.raise_()
             while selector.isVisible():
                 QApplication.processEvents()
                 time.sleep(0.01)
