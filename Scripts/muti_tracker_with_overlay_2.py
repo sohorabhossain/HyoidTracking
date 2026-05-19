@@ -446,6 +446,8 @@ class VideoThread(QThread):
         self.swallow_count = 0
         self.n_swallow_display = 3        # how many recent swallows to show
         self.show_swallow_trails = True   # whether to render trajectories
+        self.zoom_participant = False     # zoom participant view around the gradient box
+        self.zoom_region = None          # None = auto; (x,y,w,h) in secondary-image coords = manual
 
         # writer
         self.video_writer = None
@@ -698,39 +700,51 @@ class VideoThread(QThread):
                 sy = int(cy * half_h / float(h))
                 cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
         # draw swallow trajectories over secondary image
-        if not self.show_swallow_trails:
-            rgb = cv2.cvtColor(sec, cv2.COLOR_BGR2RGB)
-            h2, w2, ch = rgb.shape
-            bytes_per_line = ch * w2
-            qt_img = QImage(rgb.data, w2, h2, bytes_per_line, QImage.Format_RGB888).copy()
-            self.change_secondary.emit(qt_img)
-            return
-        _trail_palette = [
-            (0, 140, 255), (255, 0, 255), (0, 255, 255), (255, 215, 0),
-            (255, 100, 0), (100, 255, 50), (180, 0, 180), (0, 200, 150),
-            (255, 50, 50),  (50, 150, 255),
-        ]
-        for _si, _trail in enumerate(self.swallow_trails[-self.n_swallow_display:]):
-            _col = _trail_palette[_si % len(_trail_palette)]
-            for _fi in range(1, len(_trail)):
-                _prev, _curr = _trail[_fi - 1], _trail[_fi]
-                for _ti in range(min(len(_prev), len(_curr))):
-                    _p1 = (int(_prev[_ti][0] * half_w / float(w)),
-                           int(_prev[_ti][1] * half_h / float(h)))
-                    _p2 = (int(_curr[_ti][0] * half_w / float(w)),
-                           int(_curr[_ti][1] * half_h / float(h)))
-                    cv2.line(sec, _p1, _p2, _col, 2)
-        # active (in-progress) swallow drawn in white
-        if self.swallow_active and len(self.current_swallow_trail) > 1:
-            for _fi in range(1, len(self.current_swallow_trail)):
-                _prev = self.current_swallow_trail[_fi - 1]
-                _curr = self.current_swallow_trail[_fi]
-                for _ti in range(min(len(_prev), len(_curr))):
-                    _p1 = (int(_prev[_ti][0] * half_w / float(w)),
-                           int(_prev[_ti][1] * half_h / float(h)))
-                    _p2 = (int(_curr[_ti][0] * half_w / float(w)),
-                           int(_curr[_ti][1] * half_h / float(h)))
-                    cv2.line(sec, _p1, _p2, (255, 255, 255), 2)
+        if self.show_swallow_trails:
+            _trail_palette = [
+                (0, 140, 255), (255, 0, 255), (0, 255, 255), (255, 215, 0),
+                (255, 100, 0), (100, 255, 50), (180, 0, 180), (0, 200, 150),
+                (255, 50, 50),  (50, 150, 255),
+            ]
+            for _si, _trail in enumerate(self.swallow_trails[-self.n_swallow_display:]):
+                _col = _trail_palette[_si % len(_trail_palette)]
+                for _fi in range(1, len(_trail)):
+                    _prev, _curr = _trail[_fi - 1], _trail[_fi]
+                    for _ti in range(min(len(_prev), len(_curr))):
+                        _p1 = (int(_prev[_ti][0] * half_w / float(w)),
+                               int(_prev[_ti][1] * half_h / float(h)))
+                        _p2 = (int(_curr[_ti][0] * half_w / float(w)),
+                               int(_curr[_ti][1] * half_h / float(h)))
+                        cv2.line(sec, _p1, _p2, _col, 2)
+            # active (in-progress) swallow drawn in white
+            if self.swallow_active and len(self.current_swallow_trail) > 1:
+                for _fi in range(1, len(self.current_swallow_trail)):
+                    _prev = self.current_swallow_trail[_fi - 1]
+                    _curr = self.current_swallow_trail[_fi]
+                    for _ti in range(min(len(_prev), len(_curr))):
+                        _p1 = (int(_prev[_ti][0] * half_w / float(w)),
+                               int(_prev[_ti][1] * half_h / float(h)))
+                        _p2 = (int(_curr[_ti][0] * half_w / float(w)),
+                               int(_curr[_ti][1] * half_h / float(h)))
+                        cv2.line(sec, _p1, _p2, (255, 255, 255), 2)
+
+        # zoom into the region around the gradient box if enabled
+        if self.zoom_participant:
+            if self.zoom_region is not None:
+                _zx, _zy, _zw, _zh = self.zoom_region
+                _zx = min(_zx, half_w - 1)
+                _zy = min(_zy, half_h - 1)
+                _zw = min(_zw, half_w - _zx)
+                _zh = min(_zh, half_h - _zy)
+                if _zw > 0 and _zh > 0:
+                    sec = cv2.resize(sec[_zy:_zy + _zh, _zx:_zx + _zw], (half_w, half_h))
+            else:
+                _xmid = half_w // 2
+                _bw = max(1, int(half_w * self.box_width_fraction))
+                _bx = max(0, min(half_w - _bw, int(_xmid - _bw / 2) + self.box_x_offset))
+                _zoom_x = max(0, _bx - _bw)
+                if _zoom_x < half_w - 1:
+                    sec = cv2.resize(sec[:, _zoom_x:], (half_w, half_h))
 
         # convert BGR->RGB->QImage
         rgb = cv2.cvtColor(sec, cv2.COLOR_BGR2RGB)
@@ -1062,6 +1076,18 @@ class VideoThread(QThread):
     def set_show_swallow_trails(self, enabled: bool):
         self.show_swallow_trails = bool(enabled)
 
+    @Slot(bool)
+    def set_zoom_participant(self, enabled: bool):
+        self.zoom_participant = bool(enabled)
+
+    @Slot(int, int, int, int)
+    def set_zoom_region(self, x: int, y: int, w: int, h: int):
+        self.zoom_region = (max(0, x), max(0, y), max(1, w), max(1, h))
+
+    @Slot()
+    def clear_zoom_region(self):
+        self.zoom_region = None
+
 # ----------------------------
 # MainWindow with slider + SecondaryWindow
 # ----------------------------
@@ -1132,6 +1158,23 @@ class MainWindow(QWidget):
         swallow_n_row.addWidget(self.spin_swallow_n)
         self.chk_show_trails = QCheckBox("Show swallow trajectories")
         self.chk_show_trails.setChecked(True)
+        self.chk_zoom_participant = QCheckBox("Zoom participant view")
+        self.chk_zoom_participant.setToolTip(
+            "Zooms the participant view to the region from one box-width\n"
+            "left of the gradient box to the right edge of the image."
+        )
+        zoom_region_row = QHBoxLayout()
+        self.btn_set_zoom_region = QPushButton("Set Zoom Region")
+        self.btn_set_zoom_region.setToolTip(
+            "Draw a rectangle on the experimenter view to define the zoom region."
+        )
+        self.btn_reset_zoom_region = QPushButton("Reset to Auto")
+        self.btn_reset_zoom_region.setToolTip("Revert to the automatic zoom region.")
+        self.lbl_zoom_mode = QLabel("Auto")
+        self.lbl_zoom_mode.setStyleSheet("color: gray; font-style: italic;")
+        zoom_region_row.addWidget(self.btn_set_zoom_region)
+        zoom_region_row.addWidget(self.btn_reset_zoom_region)
+        zoom_region_row.addWidget(self.lbl_zoom_mode)
 
         # layout
         vbox = QVBoxLayout()
@@ -1156,6 +1199,8 @@ class MainWindow(QWidget):
         vbox.addWidget(self.lbl_swallow_count)
         vbox.addLayout(swallow_n_row)
         vbox.addWidget(self.chk_show_trails)
+        vbox.addWidget(self.chk_zoom_participant)
+        vbox.addLayout(zoom_region_row)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Manual Reinit:"))
         vbox.addWidget(self.combo_reinit)
@@ -1214,6 +1259,9 @@ class MainWindow(QWidget):
         self.btn_swallow.toggled.connect(self.on_swallow_toggled)
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
         self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
+        self.chk_zoom_participant.toggled.connect(self.worker.set_zoom_participant)
+        self.btn_set_zoom_region.clicked.connect(self.on_set_zoom_region)
+        self.btn_reset_zoom_region.clicked.connect(self.on_reset_zoom_region)
         self.worker.swallow_count_changed.connect(
             lambda n: self.lbl_swallow_count.setText(f"Swallows: {n}")
         )
@@ -1564,6 +1612,44 @@ class MainWindow(QWidget):
             self.worker.end_swallow()
             self.btn_swallow.setText("Mark Swallow Start")
             self.btn_swallow.setStyleSheet("")
+
+    @Slot()
+    def on_set_zoom_region(self):
+        if self.worker.capture_region is None:
+            QMessageBox.warning(self, "Warning", "Select a capture region first")
+            return
+        self.chk_move_box.setChecked(False)
+        self.image_label.clear_rects()
+        self.image_label.enter_draw_mode()
+        self.show_status("Draw zoom region on the experimenter view, then release.")
+        while True:
+            QApplication.processEvents()
+            if len(self.image_label.get_rects_display()) >= 1:
+                break
+            time.sleep(0.05)
+        self.image_label.exit_draw_mode()
+        r = self.image_label.get_rects_display()[0]
+        self.image_label.clear_rects()
+        # Map from experimenter-view (frame) space to secondary-image space
+        frame_w = max(1, self.display_w)
+        frame_h = max(1, self.display_h)
+        sec_w = max(1, self.worker.secondary_img_w)
+        sec_h = max(1, self.worker.secondary_img_h)
+        zx = int(r.x() * sec_w / frame_w)
+        zy = int(r.y() * sec_h / frame_h)
+        zw = max(1, int(r.width() * sec_w / frame_w))
+        zh = max(1, int(r.height() * sec_h / frame_h))
+        self.worker.set_zoom_region(zx, zy, zw, zh)
+        self.lbl_zoom_mode.setText("Custom")
+        self.lbl_zoom_mode.setStyleSheet("color: #cc6600; font-style: italic; font-weight: bold;")
+        self.show_status("Custom zoom region set.")
+
+    @Slot()
+    def on_reset_zoom_region(self):
+        self.worker.clear_zoom_region()
+        self.lbl_zoom_mode.setText("Auto")
+        self.lbl_zoom_mode.setStyleSheet("color: gray; font-style: italic;")
+        self.show_status("Zoom region reset to auto.")
 
     @Slot()
     def on_box_width_clicked(self):
