@@ -102,6 +102,5 @@ HyoidTracking/
 
 ## Notes
 
-- The Clarius SDK binaries (`cast.dll`, `pyclariuscast.pyd`) and `.onnx` model files are excluded from version control due to file size. These are required only if integrating with Clarius ultrasound hardware directly via `pycaster.py` / `pysidecaster.py`.
 - Default target FPS is 60; adjust `fps_video` in `VideoThread.__init__` if needed.
 - The tracker uses a **local search region** around each ROI to improve speed and reduce drift.
