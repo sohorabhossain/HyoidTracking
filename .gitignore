@@ -1,0 +1,28 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+
+# Large compiled binaries (Clarius SDK)
+*.dll
+*.pyd
+*.lib
+
+# ML model weights
+*.onnx
+
+# Output video files
+*.mp4
+*.avi
+*.mkv
+
+# OS artifacts
+Thumbs.db
+.DS_Store
