@@ -652,6 +652,34 @@ class VideoThread(QThread):
                 sx = int(cx * half_w / float(w))
                 sy = int(cy * half_h / float(h))
                 cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
+        # draw swallow trajectories over secondary image
+        _trail_palette = [
+            (0, 140, 255), (255, 0, 255), (0, 255, 255), (255, 215, 0),
+            (255, 100, 0), (100, 255, 50), (180, 0, 180), (0, 200, 150),
+            (255, 50, 50),  (50, 150, 255),
+        ]
+        for _si, _trail in enumerate(self.swallow_trails[-self.n_swallow_display:]):
+            _col = _trail_palette[_si % len(_trail_palette)]
+            for _fi in range(1, len(_trail)):
+                _prev, _curr = _trail[_fi - 1], _trail[_fi]
+                for _ti in range(min(len(_prev), len(_curr))):
+                    _p1 = (int(_prev[_ti][0] * half_w / float(w)),
+                           int(_prev[_ti][1] * half_h / float(h)))
+                    _p2 = (int(_curr[_ti][0] * half_w / float(w)),
+                           int(_curr[_ti][1] * half_h / float(h)))
+                    cv2.line(sec, _p1, _p2, _col, 2)
+        # active (in-progress) swallow drawn in white
+        if self.swallow_active and len(self.current_swallow_trail) > 1:
+            for _fi in range(1, len(self.current_swallow_trail)):
+                _prev = self.current_swallow_trail[_fi - 1]
+                _curr = self.current_swallow_trail[_fi]
+                for _ti in range(min(len(_prev), len(_curr))):
+                    _p1 = (int(_prev[_ti][0] * half_w / float(w)),
+                           int(_prev[_ti][1] * half_h / float(h)))
+                    _p2 = (int(_curr[_ti][0] * half_w / float(w)),
+                           int(_curr[_ti][1] * half_h / float(h)))
+                    cv2.line(sec, _p1, _p2, (255, 255, 255), 2)
+
         # convert BGR->RGB->QImage
         rgb = cv2.cvtColor(sec, cv2.COLOR_BGR2RGB)
         h2, w2, ch = rgb.shape
@@ -825,6 +853,10 @@ class VideoThread(QThread):
                     "reinit_failed": bool(reinit_failed[i])
                 })
 
+            # record swallow trail snapshot
+            if self.swallow_active and tracker_centers:
+                self.current_swallow_trail.append(list(tracker_centers))
+
             self.frame_idx += 1
             self.frames_since_reinit += 1
 
@@ -952,6 +984,28 @@ class VideoThread(QThread):
         self.secondary_img_w = max(1, w)
         self.secondary_img_h = max(1, h)
 
+    @Slot()
+    def start_swallow(self):
+        self.current_swallow_trail = []
+        self.swallow_active = True
+
+    @Slot()
+    def end_swallow(self):
+        if not self.swallow_active:
+            return
+        self.swallow_active = False
+        if self.current_swallow_trail:
+            self.swallow_trails.append(self.current_swallow_trail)
+            self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
+            self.swallow_count += 1
+            self.swallow_count_changed.emit(self.swallow_count)
+        self.current_swallow_trail = []
+
+    @Slot(int)
+    def set_n_swallow_display(self, n: int):
+        self.n_swallow_display = max(1, n)
+        self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
+
 # ----------------------------
 # MainWindow with slider + SecondaryWindow
 # ----------------------------
@@ -1008,6 +1062,19 @@ class MainWindow(QWidget):
         self.chk_show_box_main = QCheckBox("Show box on main view")
         self.chk_show_box_main.setChecked(True)
 
+        # Swallow marking controls
+        self.btn_swallow = QPushButton("Mark Swallow Start")
+        self.btn_swallow.setCheckable(True)
+        self.lbl_swallow_count = QLabel("Swallows: 0")
+        self.lbl_swallow_count.setStyleSheet("font-weight: bold;")
+        swallow_n_row = QHBoxLayout()
+        swallow_n_row.addWidget(QLabel("Show last N:"))
+        self.spin_swallow_n = QSpinBox()
+        self.spin_swallow_n.setMinimum(1)
+        self.spin_swallow_n.setMaximum(20)
+        self.spin_swallow_n.setValue(3)
+        swallow_n_row.addWidget(self.spin_swallow_n)
+
         # layout
         vbox = QVBoxLayout()
         vbox.addWidget(QLabel("Number of trackers:"))
@@ -1025,6 +1092,11 @@ class MainWindow(QWidget):
         vbox.addWidget(self.btn_box_width)
         vbox.addWidget(self.btn_box_shading)
         vbox.addWidget(self.chk_show_box_main)
+        vbox.addSpacing(6)
+        vbox.addWidget(QLabel("Swallow Marking:"))
+        vbox.addWidget(self.btn_swallow)
+        vbox.addWidget(self.lbl_swallow_count)
+        vbox.addLayout(swallow_n_row)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Manual Reinit:"))
         vbox.addWidget(self.combo_reinit)
@@ -1080,6 +1152,11 @@ class MainWindow(QWidget):
         self.chk_move_box.toggled.connect(self.on_move_box_toggled)
         self.btn_box_width.clicked.connect(self.on_box_width_clicked)
         self.btn_box_shading.clicked.connect(self.on_box_shading_clicked)
+        self.btn_swallow.toggled.connect(self.on_swallow_toggled)
+        self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
+        self.worker.swallow_count_changed.connect(
+            lambda n: self.lbl_swallow_count.setText(f"Swallows: {n}")
+        )
 
         # internal
         self.last_frame = None
@@ -1360,6 +1437,17 @@ class MainWindow(QWidget):
         if self.secondary:
             self.secondary.set_drag_mode(checked)
         self.image_label.set_box_drag_mode(checked)
+
+    @Slot(bool)
+    def on_swallow_toggled(self, checked: bool):
+        if checked:
+            self.worker.start_swallow()
+            self.btn_swallow.setText("Mark Swallow End")
+            self.btn_swallow.setStyleSheet("background-color: #cc2222; color: white; font-weight: bold;")
+        else:
+            self.worker.end_swallow()
+            self.btn_swallow.setText("Mark Swallow Start")
+            self.btn_swallow.setStyleSheet("")
 
     @Slot()
     def on_box_width_clicked(self):
