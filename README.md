@@ -1,0 +1,103 @@
+# HyoidTracking
+
+A real-time multi-target tracking tool built for ultrasound imaging research, designed to track hyoid bone (and other anatomical structures) motion from a live screen-mirrored ultrasound feed. The tool provides a dual-window GUI — an **Experimenter View** for setup and control, and a **Participant View** with configurable overlays.
+
+---
+
+## Features
+
+- **Screen-region capture** — mirror any region of the screen (e.g., an ultrasound display) as the video source
+- **Multi-target tracking** — track up to 20 simultaneous ROIs using OpenCV CSRT trackers
+- **Kalman filter smoothing** — optional Kalman filter (6-state: position, velocity, size) for noise reduction
+- **ORB-based re-initialization** — automatically recovers lost trackers using ORB feature matching and homography estimation
+- **Manual re-initialization** — draw a new ROI at any time to reset any tracker
+- **Trail visualization** — per-tracker motion trails (last 40 frames)
+- **Dual-window output**
+  - Experimenter View: full annotated feed with bounding boxes and FPS
+  - Participant View: configurable overlay with three modes (raw frame / black + gradient box / frame + gradient box)
+- **Draggable gradient box** — drag the shaded reference box horizontally in the Participant View; double-click to reset
+- **Adjustable shading** — control box width, opacity range, and number of shading steps
+- **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
+- **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`
+
+---
+
+## Requirements
+
+- Python 3.9+
+- [OpenCV](https://opencv.org/) with legacy trackers (`opencv-contrib-python`)
+- [PySide6](https://doc.qt.io/qtforpython/)
+- [NumPy](https://numpy.org/)
+- [pandas](https://pandas.pydata.org/)
+
+Install dependencies:
+
+```bash
+pip install opencv-contrib-python PySide6 numpy pandas
+```
+
+---
+
+## Usage
+
+```bash
+python Scripts/muti_tracker_with_overlay_2.py
+```
+
+### Workflow
+
+1. **Screen Mirror Region** — click and drag to select the screen region to capture (e.g., an ultrasound window)
+2. **Select ROIs** — draw bounding boxes around the targets to track; tracking starts automatically
+3. Use **Pause/Resume** to pause the feed at any time
+4. Use **Overlay mode** slider (1–3) to switch the Participant View display:
+   - `1` — mirrored frame only
+   - `2` — black background with stepped-gradient reference box + tracker dots
+   - `3` — frame background with reference box + tracker dots
+5. Check **Move Box** to drag the reference box horizontally in the Participant View (double-click to reset)
+6. Click **Adjust Shaded Box Width** or **Box Shading** to fine-tune the overlay appearance
+7. **Manual Reinit** — select a tracker from the dropdown and draw a new ROI to reset it
+8. **Export CSV** — save all tracking data to a `.csv` file
+
+---
+
+## Output Files
+
+| File | Description |
+|---|---|
+| `tracked_output_gui.mp4` | Annotated video recording of the session |
+| `tracking_data.csv` | Per-frame tracking results (measured + Kalman-smoothed) |
+| `tracking_data_with_kalman.csv` | Tracking results from a Kalman-filtered run |
+
+### CSV columns
+
+| Column | Description |
+|---|---|
+| `frame` | Frame index |
+| `tracker_id` | Tracker number (1-based) |
+| `meas_x/y/w/h` | Raw tracker measurement (top-left x, y, width, height) |
+| `smooth_x/y/w/h` | Kalman-smoothed position and size |
+| `ok` | Whether the tracker succeeded on this frame |
+| `reinit_attempted` | Whether ORB re-initialization was attempted |
+| `reinit_success` | Whether re-initialization succeeded |
+| `reinit_failed` | Whether re-initialization failed |
+
+---
+
+## Project Structure
+
+```
+HyoidTracking/
+├── Scripts/
+│   ├── muti_tracker_with_overlay_2.py   # Main GUI application
+│   ├── tracking_data.csv                # Example tracking output
+│   └── tracking_data_with_kalman.csv    # Example Kalman-filtered output
+└── README.md
+```
+
+---
+
+## Notes
+
+- The Clarius SDK binaries (`cast.dll`, `pyclariuscast.pyd`) and `.onnx` model files are excluded from version control due to file size. These are required only if integrating with Clarius ultrasound hardware directly via `pycaster.py` / `pysidecaster.py`.
+- Default target FPS is 60; adjust `fps_video` in `VideoThread.__init__` if needed.
+- The tracker uses a **local search region** around each ROI to improve speed and reduce drift.
