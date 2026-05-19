@@ -301,7 +301,12 @@ class SecondaryWindow(QWidget):
     def __init__(self, width=320, height=240):
         super().__init__()
         self.setWindowTitle("Participant View")
-        self.move(1020, 30)
+        screens = QGuiApplication.screens()
+        last_screen = screens[-1] if screens else None
+        if last_screen is not None:
+            self.move(last_screen.geometry().topLeft())
+        else:
+            self.move(1020, 30)
         self.label = QLabel()
         self.label.setMinimumSize(80, 60)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1180,7 +1185,7 @@ class MainWindow(QWidget):
         self.secondary.box_offset_changed.connect(self.worker.set_box_offset)
         self.secondary.size_changed.connect(self.worker.set_secondary_size)
         self.secondary.size_changed.connect(lambda w, _h: self.image_label.set_sec_w(w))
-        self.secondary.show()
+        self.secondary.showMaximized()
         # seed worker and image_label with the initial secondary window size
         self.worker.set_secondary_size(self.secondary.width(), self.secondary.height())
         self.image_label.set_sec_w(self.secondary.width())
@@ -1224,28 +1229,37 @@ class MainWindow(QWidget):
 
     @Slot()
     def on_load(self):
-        if not QGuiApplication.screens():
+        screens = QGuiApplication.screens()
+        if not screens:
             QMessageBox.critical(self, "Error", "No screen is available for capture")
             return
         try:
             self.hide()
             QApplication.processEvents()
             time.sleep(0.05)
-            screenshot, vdesktop = _grab_all_screens()
-            if screenshot is None:
-                self.show()
-                QMessageBox.critical(self, "Error", "Could not grab any screen")
-                return
-            selector = ScreenRegionSelector(screenshot, vdesktop)
-            selector.show()
-            selector.raise_()
-            while selector.isVisible():
+            # Show one fullscreen selector per monitor so any screen can be captured.
+            selectors = []
+            for s in screens:
+                pix = s.grabWindow(0)
+                sel = ScreenRegionSelector(pix, s.geometry())
+                sel.winId()  # ensure native handle exists before setScreen
+                sel.windowHandle().setScreen(s)
+                sel.showFullScreen()
+                selectors.append(sel)
+            while all(sel.isVisible() for sel in selectors):
                 QApplication.processEvents()
                 time.sleep(0.01)
             self.show()
             self.raise_()
             self.activateWindow()
-            rect = selector.selected_rect
+            rect = None
+            for sel in selectors:
+                if sel.selected_rect is not None:
+                    rect = sel.selected_rect
+                    break
+            for sel in selectors:
+                if sel.isVisible():
+                    sel.close()
             if rect is None or rect.width() <= 0 or rect.height() <= 0:
                 return
 
@@ -1261,7 +1275,7 @@ class MainWindow(QWidget):
             self.image_label.setFixedSize(w, h)
             self.image_label.clear_rects()
             self.image_label.setPixmap(QPixmap(w, h))
-            self.secondary.set_size(max(1, w//1.5), max(1, h//1.5))
+            self.secondary.showMaximized()  # keep participant view maximized on its screen
             self.show_status("Capture region selected. Click Select ROIs to draw.")
             frame = self.worker.grab_capture_frame()
             if frame is not None:
@@ -1288,6 +1302,7 @@ class MainWindow(QWidget):
 
     @Slot()
     def on_select_rois_gui(self):
+        self.chk_move_box.setChecked(False)  # disable box drag while drawing ROIs
         n = self.spin_num.value()
         if self.worker.capture_region is None:
             QMessageBox.warning(self, "Warning", "Select a capture region first")
@@ -1374,6 +1389,7 @@ class MainWindow(QWidget):
 
     @Slot()
     def on_manual_reinit_gui(self):
+        self.chk_move_box.setChecked(False)  # disable box drag while drawing reinit ROI
         idx = self.combo_reinit.currentIndex()
         if self.worker.capture_region is None:
             QMessageBox.warning(self, "Warning", "Select a capture region first")
