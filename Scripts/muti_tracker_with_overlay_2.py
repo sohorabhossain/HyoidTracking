@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from PySide6.QtCore import QThread, Signal, Slot, Qt, QRect, QPoint
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QGuiApplication
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QGuiApplication, QColor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QFileDialog, QSpinBox, QComboBox, QMessageBox, QCheckBox, QSizePolicy,
@@ -938,6 +938,10 @@ class MainWindow(QWidget):
         # Button to open box shading dialog (alpha range + number of shades)
         self.btn_box_shading = QPushButton("Box Shading...")
 
+        # Toggle to mirror gradient box onto the main (experimenter) view
+        self.chk_show_box_main = QCheckBox("Show box on main view")
+        self.chk_show_box_main.setChecked(True)
+
         # layout
         vbox = QVBoxLayout()
         vbox.addWidget(QLabel("Number of trackers:"))
@@ -954,6 +958,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.chk_move_box)
         vbox.addWidget(self.btn_box_width)
         vbox.addWidget(self.btn_box_shading)
+        vbox.addWidget(self.chk_show_box_main)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Manual Reinit:"))
         vbox.addWidget(self.combo_reinit)
@@ -1209,6 +1214,33 @@ class MainWindow(QWidget):
     def on_frame(self, qt_img):
         pix = QPixmap.fromImage(qt_img)
         pix = pix.scaled(self.image_label.size(), Qt.KeepAspectRatio)
+
+        if self.chk_show_box_main.isChecked() and int(self.worker.secondary_mode) in (2, 3):
+            disp_w = pix.width()
+            disp_h = pix.height()
+            # half_w is the secondary-image width; box coords were computed in that space
+            half_w = max(1, qt_img.width() // 2)
+            scale = disp_w / qt_img.width()  # display vs. original frame scale
+
+            main_box_w = max(1, int(disp_w * self.worker.box_width_fraction))
+            main_xmid = disp_w // 2
+            main_offset = int(self.worker.box_x_offset * disp_w / half_w)
+            main_box_x = max(0, min(disp_w - main_box_w,
+                                    int(main_xmid - main_box_w / 2) + main_offset))
+
+            n = self.worker.box_num_shades
+            a_max = self.worker.box_alpha_max
+            step = (a_max - self.worker.box_alpha_min) / n
+            green = QColor(0, 255, 0)
+
+            painter = QPainter(pix)
+            for i in range(n):
+                seg_x = main_box_x + int(i * main_box_w / n)
+                seg_w = int((i + 1) * main_box_w / n) - int(i * main_box_w / n)
+                painter.setOpacity(a_max - i * step)
+                painter.fillRect(seg_x, 0, seg_w, disp_h, green)
+            painter.end()
+
         self.image_label.setPixmap(pix)
 
     @Slot(QImage)
