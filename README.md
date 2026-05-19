@@ -14,7 +14,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Trail visualization** — per-tracker motion trails (last 40 frames)
 - **Dual-window output**
   - Experimenter View: full annotated feed with bounding boxes and FPS
-  - Participant View: configurable overlay with four modes (raw frame / black + gradient box / frame + gradient box / swallow strength meter)
+  - Participant View: configurable overlay with five modes (raw frame / black + gradient box / frame + gradient box / swallow strength meter / swallow speedometer)
 - **Draggable gradient box** — drag the shaded reference box horizontally in both the Participant View and the Experimenter View; the two views stay in sync; double-click to reset
 - **Box overlay on experimenter view** — optional checkbox mirrors the gradient box onto the main display
 - **Adjustable shading** — control box width, opacity range, and number of shading steps
@@ -53,11 +53,12 @@ python Scripts/muti_tracker_with_overlay_2.py
 1. **Screen Mirror Region** — click and drag to select the screen region to capture (e.g., an ultrasound window)
 2. **Select ROIs** — draw bounding boxes around the targets to track; tracking starts automatically
 3. Use **Pause/Resume** to pause the feed at any time
-4. Use **Overlay mode** slider (1–4) to switch the Participant View display:
+4. Use **Overlay mode** slider (1–5) to switch the Participant View display:
    - `1` — Copy: mirrored frame only
    - `2` — Black+Box: black background with stepped-gradient reference box + tracker dots
    - `3` — Frame+Box: frame background with reference box + tracker dots
    - `4` — Strength Meter: real-time swallow strength bar showing horizontal excursion of the tracked target; displays current and past swallow markers with an auto-scaling gauge
+   - `5` — Speedometer: circular gauge showing peak swallow speed (px/s); updates live during an active swallow and holds the last peak value between swallows; auto-scaling
 5. Check **Move Box** to drag the reference box horizontally in either view (double-click to reset); enable **Show box on main view** to mirror it on the Experimenter View
 6. Click **Adjust Shaded Box Width** or **Box Shading** to fine-tune the overlay appearance
 7. **Swallow Marking** — click **Mark Swallow Start** when a swallow begins, then **Mark Swallow End** when it finishes; the trajectory is saved and drawn on the Participant View; use the **Show last N** spinner to control how many past swallows are displayed

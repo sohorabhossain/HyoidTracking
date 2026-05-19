@@ -1,6 +1,7 @@
 # multi_tracker_gui_secondary.py
 import sys
 import time
+import math
 import cv2
 import numpy as np
 import pandas as pd
@@ -451,6 +452,9 @@ class VideoThread(QThread):
         # mode-4 strength meter
         self.last_swallow_excursion = 0.0   # horizontal range of last completed swallow (frame px)
         self.strength_scale_max = 200.0     # top of scale (frame px); auto-expands
+        # mode-5 speedometer
+        self.last_swallow_peak_speed = 0.0  # peak speed of last completed swallow (frame px/s)
+        self.speed_scale_max = 500.0        # top of speedometer scale (frame px/s); auto-expands
 
         # writer
         self.video_writer = None
@@ -797,6 +801,115 @@ class VideoThread(QThread):
                 cv2.putText(sec, "LIVE",
                             (int(half_w * 0.72), _bar_top + int(half_h * 0.04)),
                             cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.4, (0, 80, 255), 2)
+        elif mode == 5:  # speedometer
+            sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
+            # --- current speed to display (rolling max over last 5 frames while live) ---
+            if self.swallow_active and len(self.current_swallow_trail) >= 2:
+                _win = min(5, len(self.current_swallow_trail) - 1)
+                _live_spd = 0.0
+                for _wi in range(_win):
+                    _fi = len(self.current_swallow_trail) - 1 - _wi
+                    _ppts = self.current_swallow_trail[_fi - 1]
+                    _cpts = self.current_swallow_trail[_fi]
+                    for _ti in range(min(len(_ppts), len(_cpts))):
+                        _dx = _cpts[_ti][0] - _ppts[_ti][0]
+                        _dy = _cpts[_ti][1] - _ppts[_ti][1]
+                        _live_spd = max(_live_spd,
+                                        math.sqrt(_dx * _dx + _dy * _dy) * self.fps_video)
+                _cur_spd = _live_spd
+            else:
+                _cur_spd = self.last_swallow_peak_speed
+            _spd_scale = max(1.0, self.speed_scale_max)
+            _ratio = min(1.0, _cur_spd / _spd_scale)
+
+            # --- layout ---
+            _cx   = half_w // 2
+            _cy   = int(half_h * 0.62)
+            _r    = int(min(half_w, half_h) * 0.40)
+            _athk = max(3, _r // 8)          # arc stroke thickness
+            _fsc  = max(0.28, half_h / 900)  # font scale
+
+            # Speedometer arc: cv2 angle 135° (lower-left) to 405° (=45°, lower-right)
+            # going clockwise in cv2 (visually counterclockwise — left→top→right).
+            # color gradient: green→yellow→red along the arc.
+            _n_segs = 90
+            for _s in range(_n_segs):
+                _t0 = _s / _n_segs
+                _t1 = (_s + 1) / _n_segs
+                _a0 = math.radians(135.0 + _t0 * 270.0)
+                _a1 = math.radians(135.0 + _t1 * 270.0)
+                _x0 = int(_cx + _r * math.cos(_a0))
+                _y0 = int(_cy + _r * math.sin(_a0))
+                _x1 = int(_cx + _r * math.cos(_a1))
+                _y1 = int(_cy + _r * math.sin(_a1))
+                # BGR color along arc: green(0,200,0)→yellow(0,200,200)→red(0,0,200)
+                if _t0 < 0.5:
+                    _sc = (_B, _G, _R) = (0, 200, int(_t0 * 2 * 200))
+                else:
+                    _sc = (_B, _G, _R) = (0, int((1.0 - (_t0 - 0.5) * 2) * 200), 200)
+                if _t0 > _ratio:
+                    _sc = (_B // 5, _G // 5, _R // 5)
+                cv2.line(sec, (_x0, _y0), (_x1, _y1), _sc, _athk)
+
+            # --- major ticks and labels (5 marks: 0 / 25 / 50 / 75 / 100 %) ---
+            for _pct in [0, 25, 50, 75, 100]:
+                _ta = math.radians(135.0 + _pct / 100.0 * 270.0)
+                _cos_ta, _sin_ta = math.cos(_ta), math.sin(_ta)
+                _ox = int(_cx + _r * 1.04 * _cos_ta)
+                _oy = int(_cy + _r * 1.04 * _sin_ta)
+                _ix = int(_cx + _r * 0.82 * _cos_ta)
+                _iy = int(_cy + _r * 0.82 * _sin_ta)
+                cv2.line(sec, (_ix, _iy), (_ox, _oy), (200, 200, 200), 2)
+                _lx = int(_cx + _r * 1.22 * _cos_ta) - 14
+                _ly = int(_cy + _r * 1.22 * _sin_ta) + 4
+                cv2.putText(sec, f"{_pct / 100.0 * _spd_scale:.0f}",
+                            (_lx, _ly), cv2.FONT_HERSHEY_SIMPLEX,
+                            _fsc * 0.85, (160, 160, 160), 1)
+
+            # --- minor ticks (every 10 %) ---
+            for _pct10 in range(0, 101, 10):
+                if _pct10 % 25 == 0:
+                    continue
+                _ta = math.radians(135.0 + _pct10 / 100.0 * 270.0)
+                _ox = int(_cx + _r * 1.04 * math.cos(_ta))
+                _oy = int(_cy + _r * 1.04 * math.sin(_ta))
+                _ix = int(_cx + _r * 0.93 * math.cos(_ta))
+                _iy = int(_cy + _r * 0.93 * math.sin(_ta))
+                cv2.line(sec, (_ix, _iy), (_ox, _oy), (110, 110, 110), 1)
+
+            # --- needle ---
+            _na    = math.radians(135.0 + _ratio * 270.0)
+            _tip_x = int(_cx + _r * 0.80 * math.cos(_na))
+            _tip_y = int(_cy + _r * 0.80 * math.sin(_na))
+            _bas_x = int(_cx - _r * 0.14 * math.cos(_na))
+            _bas_y = int(_cy - _r * 0.14 * math.sin(_na))
+            cv2.line(sec, (_bas_x, _bas_y), (_tip_x, _tip_y), (255, 255, 255), 3)
+            cv2.circle(sec, (_cx, _cy), max(5, _r // 10), (180, 180, 180), -1)
+
+            # --- title ---
+            _ttl = "SWALLOW SPEED"
+            _tw  = cv2.getTextSize(_ttl, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.15, 1)[0][0]
+            cv2.putText(sec, _ttl, (_cx - _tw // 2, int(half_h * 0.09)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.15, (220, 220, 220), 1)
+
+            # --- value inside gauge ---
+            _vstr = f"{_cur_spd:.1f} px/s"
+            _vw   = cv2.getTextSize(_vstr, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, 1)[0][0]
+            cv2.putText(sec, _vstr, (_cx - _vw // 2, int(_cy + _r * 0.36)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, (255, 255, 255), 1)
+            _lbl2 = "(peak)" if not self.swallow_active else "(live)"
+            _lw   = cv2.getTextSize(_lbl2, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, 1)[0][0]
+            cv2.putText(sec, _lbl2, (_cx - _lw // 2, int(_cy + _r * 0.52)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, (160, 160, 160), 1)
+
+            # --- swallow count & LIVE badge ---
+            cv2.putText(sec, f"Swallows: {self.swallow_count}",
+                        (int(half_w * 0.05), int(half_h * 0.95)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _fsc, (200, 200, 200), 1)
+            if self.swallow_active:
+                cv2.putText(sec, "LIVE",
+                            (int(half_w * 0.76), int(half_h * 0.10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.4, (0, 80, 255), 2)
         else:
             sec = cv2.resize(frame, (half_w, half_h))
 
@@ -1172,6 +1285,19 @@ class VideoThread(QThread):
                 self.last_swallow_excursion = float(max(_all_cx) - min(_all_cx))
                 if self.last_swallow_excursion > self.strength_scale_max:
                     self.strength_scale_max = self.last_swallow_excursion * 1.2
+            # compute peak speed for mode-5 speedometer
+            if len(self.current_swallow_trail) >= 2:
+                _peak = 0.0
+                for _fi in range(1, len(self.current_swallow_trail)):
+                    _prev = self.current_swallow_trail[_fi - 1]
+                    _curr = self.current_swallow_trail[_fi]
+                    for _ti in range(min(len(_prev), len(_curr))):
+                        _dx = _curr[_ti][0] - _prev[_ti][0]
+                        _dy = _curr[_ti][1] - _prev[_ti][1]
+                        _peak = max(_peak, math.sqrt(_dx * _dx + _dy * _dy) * self.fps_video)
+                self.last_swallow_peak_speed = _peak
+                if _peak > self.speed_scale_max:
+                    self.speed_scale_max = _peak * 1.2
         self.current_swallow_trail = []
 
     @Slot(int)
@@ -1228,7 +1354,7 @@ class MainWindow(QWidget):
         self.slider_label = QLabel("Mode 1: Copy")
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setMinimum(1)
-        self.slider.setMaximum(4)
+        self.slider.setMaximum(5)
         self.slider.setValue(1)
         self.slider.setTickPosition(QSlider.TicksBelow)
         self.slider.setTickInterval(1)
@@ -1696,7 +1822,7 @@ class MainWindow(QWidget):
         # user moved slider -> manual override enabled
         self.secondary_manual_override = True
         v = int(v)
-        _names = {1: "Copy", 2: "Black+Box", 3: "Frame+Box", 4: "Strength Meter"}
+        _names = {1: "Copy", 2: "Black+Box", 3: "Frame+Box", 4: "Strength Meter", 5: "Speedometer"}
         self.slider_label.setText(f"Mode {v}: {_names.get(v, '')}")
         self.worker.secondary_mode = v
         self.worker.secondary_manual_override = True
