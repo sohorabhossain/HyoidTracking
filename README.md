@@ -19,7 +19,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Box overlay on experimenter view** — optional checkbox mirrors the gradient box onto the main display
 - **Adjustable shading** — control box width, opacity range, and number of shading steps
 - **Swallow marking** — one-click toggle to record tracker trajectories for each swallow event; completed trails are drawn on the Participant View in distinct colors, with the active trial shown in white
-- **Configurable trail history** — choose how many past swallow trajectories to display (1–20)
+- **Configurable trail history** — choose how many past swallow trajectories to display (1–20); clear all recorded trajectories at any time with the **Clear Trajectories** button
 - **Participant view zoom** — optionally zoom the Participant View into the region around the gradient box; supports auto-zoom (based on box position) or a custom zoom region drawn on the Experimenter View
 - **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
 - **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`

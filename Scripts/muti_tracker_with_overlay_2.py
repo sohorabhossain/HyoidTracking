@@ -455,6 +455,10 @@ class VideoThread(QThread):
         # mode-5 speedometer
         self.last_swallow_peak_speed = 0.0  # peak speed of last completed swallow (frame px/s)
         self.speed_scale_max = 500.0        # top of speedometer scale (frame px/s); auto-expands
+        # cached last frame for forced re-renders (e.g. when trails toggled while paused)
+        self._last_sec_frame = None
+        self._last_tracker_centers = []
+        self._request_secondary_redraw = False
 
         # writer
         self.video_writer = None
@@ -982,6 +986,13 @@ class VideoThread(QThread):
 
         while not self.stop_requested:
             if self.paused:
+                if self._request_secondary_redraw and self._last_sec_frame is not None:
+                    self._request_secondary_redraw = False
+                    try:
+                        self.emit_secondary_image(self._last_sec_frame,
+                                                   self._last_tracker_centers)
+                    except Exception:
+                        pass
                 time.sleep(0.03)
                 continue
             t0 = time.time()
@@ -1157,6 +1168,10 @@ class VideoThread(QThread):
             qt_img = QImage(rgb.data, w2, h2, bytes_per_line, QImage.Format_RGB888).copy()
             self.change_pixmap.emit(qt_img)
 
+            # cache for potential re-renders (e.g. trail toggle while paused)
+            self._last_sec_frame = frame
+            self._last_tracker_centers = list(tracker_centers)
+            self._request_secondary_redraw = False
             # emit secondary based on current secondary_mode
             try:
                 self.emit_secondary_image(frame, tracker_centers)
@@ -1308,6 +1323,13 @@ class VideoThread(QThread):
     @Slot(bool)
     def set_show_swallow_trails(self, enabled: bool):
         self.show_swallow_trails = bool(enabled)
+        self._request_secondary_redraw = True
+
+    @Slot()
+    def clear_swallow_trails(self):
+        self.swallow_trails = []
+        self.current_swallow_trail = []
+        self._request_secondary_redraw = True
 
     @Slot(bool)
     def set_zoom_participant(self, enabled: bool):
@@ -1391,6 +1413,7 @@ class MainWindow(QWidget):
         swallow_n_row.addWidget(self.spin_swallow_n)
         self.chk_show_trails = QCheckBox("Show swallow trajectories")
         self.chk_show_trails.setChecked(True)
+        self.btn_clear_trails = QPushButton("Clear Trajectories")
         self.chk_zoom_participant = QCheckBox("Zoom participant view")
         self.chk_zoom_participant.setToolTip(
             "Zooms the participant view to the region from one box-width\n"
@@ -1432,6 +1455,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.lbl_swallow_count)
         vbox.addLayout(swallow_n_row)
         vbox.addWidget(self.chk_show_trails)
+        vbox.addWidget(self.btn_clear_trails)
         vbox.addWidget(self.chk_zoom_participant)
         vbox.addLayout(zoom_region_row)
         vbox.addSpacing(6)
@@ -1492,6 +1516,7 @@ class MainWindow(QWidget):
         self.btn_swallow.toggled.connect(self.on_swallow_toggled)
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
         self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
+        self.btn_clear_trails.clicked.connect(self.worker.clear_swallow_trails)
         self.chk_zoom_participant.toggled.connect(self.worker.set_zoom_participant)
         self.btn_set_zoom_region.clicked.connect(self.on_set_zoom_region)
         self.btn_reset_zoom_region.clicked.connect(self.on_reset_zoom_region)
