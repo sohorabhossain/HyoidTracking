@@ -714,8 +714,21 @@ class VideoThread(QThread):
             sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
             # --- current excursion to display ---
             if self.swallow_active and self.current_swallow_trail:
-                _all_cx = [_pt[0] for _fpts in self.current_swallow_trail for _pt in _fpts]
-                _cur_exc = float(max(_all_cx) - min(_all_cx)) if len(_all_cx) >= 2 else 0.0
+                if len(self.current_swallow_trail) >= 2:
+                    _n_tr = max(len(_fp) for _fp in self.current_swallow_trail)
+                    _cur_exc = 0.0
+                    for _ti in range(_n_tr):
+                        _tot = 0.0
+                        for _fi in range(1, len(self.current_swallow_trail)):
+                            _pp = self.current_swallow_trail[_fi - 1]
+                            _cp = self.current_swallow_trail[_fi]
+                            if _ti < len(_pp) and _ti < len(_cp):
+                                _ddx = _cp[_ti][0] - _pp[_ti][0]
+                                _ddy = _cp[_ti][1] - _pp[_ti][1]
+                                _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
+                        _cur_exc = max(_cur_exc, _tot)
+                else:
+                    _cur_exc = 0.0
             else:
                 _cur_exc = self.last_swallow_excursion
             _scale_max = max(1.0, self.strength_scale_max)
@@ -780,9 +793,20 @@ class VideoThread(QThread):
             # --- previous swallow markers on left of bar ---
             _prev_excs = []
             for _tr in self.swallow_trails:
-                _cxs = [_pt[0] for _fp in _tr for _pt in _fp]
-                if len(_cxs) >= 2:
-                    _prev_excs.append(float(max(_cxs) - min(_cxs)))
+                if len(_tr) >= 2:
+                    _n_tr2 = max(len(_fp) for _fp in _tr)
+                    _tr_exc = 0.0
+                    for _ti in range(_n_tr2):
+                        _tot2 = 0.0
+                        for _fi in range(1, len(_tr)):
+                            _pp2 = _tr[_fi - 1]
+                            _cp2 = _tr[_fi]
+                            if _ti < len(_pp2) and _ti < len(_cp2):
+                                _ddx2 = _cp2[_ti][0] - _pp2[_ti][0]
+                                _ddy2 = _cp2[_ti][1] - _pp2[_ti][1]
+                                _tot2 += math.sqrt(_ddx2 * _ddx2 + _ddy2 * _ddy2)
+                        _tr_exc = max(_tr_exc, _tot2)
+                    _prev_excs.append(_tr_exc)
             for _pi, _pexc in enumerate(_prev_excs):
                 _pr = min(1.0, _pexc / _scale_max)
                 _py = int(_bar_bot - _pr * _bar_h)
@@ -1294,10 +1318,21 @@ class VideoThread(QThread):
             self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
             self.swallow_count += 1
             self.swallow_count_changed.emit(self.swallow_count)
-            # compute horizontal excursion for mode-4 strength meter
-            _all_cx = [_pt[0] for _fpts in self.current_swallow_trail for _pt in _fpts]
-            if len(_all_cx) >= 2:
-                self.last_swallow_excursion = float(max(_all_cx) - min(_all_cx))
+            # compute Cartesian excursion (total arc length) for mode-4 strength meter
+            if len(self.current_swallow_trail) >= 2:
+                _n_tr = max(len(_fp) for _fp in self.current_swallow_trail)
+                _max_exc = 0.0
+                for _ti in range(_n_tr):
+                    _tot = 0.0
+                    for _fi in range(1, len(self.current_swallow_trail)):
+                        _pp = self.current_swallow_trail[_fi - 1]
+                        _cp = self.current_swallow_trail[_fi]
+                        if _ti < len(_pp) and _ti < len(_cp):
+                            _ddx = _cp[_ti][0] - _pp[_ti][0]
+                            _ddy = _cp[_ti][1] - _pp[_ti][1]
+                            _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
+                    _max_exc = max(_max_exc, _tot)
+                self.last_swallow_excursion = _max_exc
                 if self.last_swallow_excursion > self.strength_scale_max:
                     self.strength_scale_max = self.last_swallow_excursion * 1.2
             # compute peak speed for mode-5 speedometer
