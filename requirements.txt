@@ -1,4 +1,4 @@
-numpy==2.3.2
-pandas==2.3.3
-opencv-contrib-python==4.12.0.88
-PySide6==6.10.1
+numpy
+pandas
+opencv-contrib-python
+PySide6
