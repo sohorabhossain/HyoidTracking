@@ -3,3 +3,4 @@ pandas
 opencv-contrib-python
 PySide6
 pywin32
+opencv-python
