@@ -7,11 +7,11 @@ import numpy as np
 import pandas as pd
 
 from PySide6.QtCore import QThread, Signal, Slot, Qt, QRect, QPoint
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QGuiApplication, QColor
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QGuiApplication, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QFileDialog, QSpinBox, QComboBox, QMessageBox, QCheckBox, QSizePolicy,
-    QSlider, QFrame, QDialog, QDialogButtonBox
+    QSlider, QFrame, QDialog, QDialogButtonBox, QScrollArea,
 )
 
 # ----------------------------
@@ -457,6 +457,9 @@ class VideoThread(QThread):
         # mode-5 speedometer
         self.last_swallow_peak_speed = 0.0  # peak speed of last completed swallow (frame px/s)
         self.speed_scale_max = 2500.0        # top of speedometer scale (frame px/s); auto-expands
+        self.auto_expand_strength = True
+        self.auto_expand_speed    = True
+        self.show_participant_labels = True
         # cached last frame for forced re-renders (e.g. when trails toggled while paused)
         self._last_sec_frame = None
         self._last_tracker_centers = []
@@ -796,12 +799,13 @@ class VideoThread(QThread):
             _tick_x  = _bar_x + _bar_w_px + 2
             _lbl_x   = _tick_x + 10
             _font_sc = max(0.25, half_h / 900)
-            for _pct in [0, 25, 50, 75, 100]:
-                _ty = int(_bar_bot - (_pct / 100.0) * _bar_h)
-                cv2.line(sec, (_tick_x, _ty), (_tick_x + 7, _ty), (180, 180, 180), 1)
-                cv2.putText(sec, f"{_pct / 100.0 * _scale_max:.0f}",
-                            (_lbl_x, _ty + 4), cv2.FONT_HERSHEY_SIMPLEX,
-                            _font_sc, (180, 180, 180), 1)
+            if self.show_participant_labels:
+                for _pct in [0, 25, 50, 75, 100]:
+                    _ty = int(_bar_bot - (_pct / 100.0) * _bar_h)
+                    cv2.line(sec, (_tick_x, _ty), (_tick_x + 7, _ty), (180, 180, 180), 1)
+                    cv2.putText(sec, f"{_pct / 100.0 * _scale_max:.0f}",
+                                (_lbl_x, _ty + 4), cv2.FONT_HERSHEY_SIMPLEX,
+                                _font_sc, (180, 180, 180), 1)
 
             # --- previous swallow markers on left of bar ---
             _prev_excs = []
@@ -1360,12 +1364,13 @@ class VideoThread(QThread):
                                 _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
                         _max_exc = max(_max_exc, _tot)
                 self.last_swallow_excursion = _max_exc
-                if self.strength_metric == "displacement":
-                    if _max_exc > self.strength_scale_max_displacement:
-                        self.strength_scale_max_displacement = _max_exc * 1.2
-                else:
-                    if _max_exc > self.strength_scale_max_arc_length:
-                        self.strength_scale_max_arc_length = _max_exc * 1.2
+                if self.auto_expand_strength:
+                    if self.strength_metric == "displacement":
+                        if _max_exc > self.strength_scale_max_displacement:
+                            self.strength_scale_max_displacement = _max_exc * 1.2
+                    else:
+                        if _max_exc > self.strength_scale_max_arc_length:
+                            self.strength_scale_max_arc_length = _max_exc * 1.2
             # compute peak speed for mode-5 speedometer
             if len(self.current_swallow_trail) >= 2:
                 _peak = 0.0
@@ -1377,7 +1382,7 @@ class VideoThread(QThread):
                         _dy = _curr[_ti][1] - _prev[_ti][1]
                         _peak = max(_peak, math.sqrt(_dx * _dx + _dy * _dy) * self.fps_video)
                 self.last_swallow_peak_speed = _peak
-                if _peak > self.speed_scale_max:
+                if self.auto_expand_speed and _peak > self.speed_scale_max:
                     self.speed_scale_max = _peak * 1.2
         self.current_swallow_trail = []
 
@@ -1389,6 +1394,30 @@ class VideoThread(QThread):
     @Slot(str)
     def set_strength_metric(self, metric: str):
         self.strength_metric = metric
+
+    @Slot(bool)
+    def set_auto_expand_strength(self, enabled: bool):
+        self.auto_expand_strength = bool(enabled)
+
+    @Slot(bool)
+    def set_auto_expand_speed(self, enabled: bool):
+        self.auto_expand_speed = bool(enabled)
+
+    @Slot(bool)
+    def set_show_participant_labels(self, enabled: bool):
+        self.show_participant_labels = bool(enabled)
+
+    @Slot(int)
+    def set_strength_scale_displacement(self, value: int):
+        self.strength_scale_max_displacement = float(max(1, value))
+
+    @Slot(int)
+    def set_strength_scale_arc_length(self, value: int):
+        self.strength_scale_max_arc_length = float(max(1, value))
+
+    @Slot(int)
+    def set_speed_scale_max(self, value: int):
+        self.speed_scale_max = float(max(1, value))
 
     @Slot(bool)
     def set_show_swallow_trails(self, enabled: bool):
@@ -1434,11 +1463,11 @@ class MainWindow(QWidget):
         self.spin_num = QSpinBox(); self.spin_num.setMinimum(1); self.spin_num.setValue(num_of_tracker); self.spin_num.setMaximum(20)
         self.chk_kf = QCheckBox("Use Kalman Filter"); self.chk_kf.setChecked(bool(use_kf))
         self.btn_load = QPushButton("Screen Mirror Region")
-        self.btn_select_rois = QPushButton("Select ROIs")
-        self.btn_start = QPushButton("Start Tracking")
-        self.btn_pause = QPushButton("Pause/Resume")
+        self.btn_select_rois = QPushButton("Select ROIs (Ctrl+I)")
+        self.btn_start = QPushButton("Start Tracking (Ctrl+T)")
+        self.btn_pause = QPushButton("Pause/Resume (Ctrl+P)")
         self.combo_reinit = QComboBox(); self.combo_reinit.addItems([f"Tracker {i+1}" for i in range(num_of_tracker)])
-        self.btn_reinit = QPushButton("Reinit Selected (draw)")
+        self.btn_reinit = QPushButton("Reinit Selected (draw) (Ctrl+R)")
         self.btn_export = QPushButton("Export CSV")
         self.btn_exit = QPushButton("Exit")
 
@@ -1470,7 +1499,7 @@ class MainWindow(QWidget):
         self.chk_show_box_main.setChecked(True)
 
         # Swallow marking controls
-        self.btn_swallow = QPushButton("Mark Swallow Start")
+        self.btn_swallow = QPushButton("Mark Swallow Start (Ctrl+S)")
         self.btn_swallow.setCheckable(True)
         self.lbl_swallow_count = QLabel("Swallows: 0")
         self.lbl_swallow_count.setStyleSheet("font-weight: bold;")
@@ -1483,7 +1512,7 @@ class MainWindow(QWidget):
         swallow_n_row.addWidget(self.spin_swallow_n)
         self.chk_show_trails = QCheckBox("Show swallow trajectories")
         self.chk_show_trails.setChecked(True)
-        self.btn_clear_trails = QPushButton("Clear Trajectories")
+        self.btn_clear_trails = QPushButton("Clear Trajectories (Ctrl+C)")
         strength_metric_row = QHBoxLayout()
         strength_metric_row.addWidget(QLabel("Strength metric:"))
         self.combo_strength_metric = QComboBox()
@@ -1507,6 +1536,36 @@ class MainWindow(QWidget):
         zoom_region_row.addWidget(self.btn_set_zoom_region)
         zoom_region_row.addWidget(self.btn_reset_zoom_region)
         zoom_region_row.addWidget(self.lbl_zoom_mode)
+
+        # scale settings widgets
+        self.chk_auto_expand_strength = QCheckBox("Auto-expand strength scale")
+        self.chk_auto_expand_strength.setChecked(True)
+        disp_scale_row = QHBoxLayout()
+        disp_scale_row.addWidget(QLabel("Disp. max:"))
+        self.slider_disp_scale = QSlider(Qt.Horizontal)
+        self.slider_disp_scale.setRange(1, 500)
+        self.slider_disp_scale.setValue(30)
+        self.lbl_disp_scale_val = QLabel("30 px")
+        disp_scale_row.addWidget(self.slider_disp_scale)
+        disp_scale_row.addWidget(self.lbl_disp_scale_val)
+        arc_scale_row = QHBoxLayout()
+        arc_scale_row.addWidget(QLabel("Arc max:"))
+        self.slider_arc_scale = QSlider(Qt.Horizontal)
+        self.slider_arc_scale.setRange(1, 5000)
+        self.slider_arc_scale.setValue(500)
+        self.lbl_arc_scale_val = QLabel("500 px")
+        arc_scale_row.addWidget(self.slider_arc_scale)
+        arc_scale_row.addWidget(self.lbl_arc_scale_val)
+        self.chk_auto_expand_speed = QCheckBox("Auto-expand speed scale")
+        self.chk_auto_expand_speed.setChecked(True)
+        spd_scale_row = QHBoxLayout()
+        spd_scale_row.addWidget(QLabel("Speed max:"))
+        self.slider_speed_scale = QSlider(Qt.Horizontal)
+        self.slider_speed_scale.setRange(100, 10000)
+        self.slider_speed_scale.setValue(2500)
+        self.lbl_speed_scale_val = QLabel("2500 px/s")
+        spd_scale_row.addWidget(self.slider_speed_scale)
+        spd_scale_row.addWidget(self.lbl_speed_scale_val)
 
         # layout
         vbox = QVBoxLayout()
@@ -1538,14 +1597,28 @@ class MainWindow(QWidget):
         vbox.addWidget(self.chk_zoom_participant)
         vbox.addLayout(zoom_region_row)
         vbox.addSpacing(6)
+        vbox.addWidget(QLabel("Scale Settings (Mode 4 & 5):"))
+        vbox.addWidget(self.chk_auto_expand_strength)
+        vbox.addLayout(disp_scale_row)
+        vbox.addLayout(arc_scale_row)
+        vbox.addWidget(self.chk_auto_expand_speed)
+        vbox.addLayout(spd_scale_row)
+        vbox.addSpacing(6)
         vbox.addWidget(self.btn_pause)
         vbox.addWidget(self.btn_export)
         vbox.addWidget(self.btn_exit)
         vbox.addStretch(1)
 
+        ctrl_widget = QWidget()
+        ctrl_widget.setLayout(vbox)
+        ctrl_scroll = QScrollArea()
+        ctrl_scroll.setWidget(ctrl_widget)
+        ctrl_scroll.setWidgetResizable(True)
+        ctrl_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         hbox = QHBoxLayout()
         hbox.addWidget(self.image_label)
-        hbox.addLayout(vbox)
+        hbox.addWidget(ctrl_scroll)
         self.setLayout(hbox)
 
         # status
@@ -1577,6 +1650,14 @@ class MainWindow(QWidget):
         self.secondary_manual_override = False
 
         # connections
+        # hotkeys
+        QShortcut(QKeySequence("Ctrl+I"), self).activated.connect(self.btn_select_rois.click)
+        QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.btn_reinit.click)
+        QShortcut(QKeySequence("Ctrl+T"), self).activated.connect(self.btn_start.click)
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.btn_swallow.toggle)
+        QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self.btn_pause.click)
+        QShortcut(QKeySequence("Ctrl+C"), self).activated.connect(self.btn_clear_trails.click)
+
         self.btn_load.clicked.connect(self.on_load)
         self.btn_select_rois.clicked.connect(self.on_select_rois_gui)
         self.btn_start.clicked.connect(self.on_start_tracking)
@@ -1597,6 +1678,17 @@ class MainWindow(QWidget):
         self.combo_strength_metric.currentIndexChanged.connect(
             lambda: self.worker.set_strength_metric(self.combo_strength_metric.currentData())
         )
+        self.chk_auto_expand_strength.toggled.connect(self.worker.set_auto_expand_strength)
+        self.slider_disp_scale.valueChanged.connect(self.worker.set_strength_scale_displacement)
+        self.slider_disp_scale.valueChanged.connect(
+            lambda v: self.lbl_disp_scale_val.setText(f"{v} px"))
+        self.slider_arc_scale.valueChanged.connect(self.worker.set_strength_scale_arc_length)
+        self.slider_arc_scale.valueChanged.connect(
+            lambda v: self.lbl_arc_scale_val.setText(f"{v} px"))
+        self.chk_auto_expand_speed.toggled.connect(self.worker.set_auto_expand_speed)
+        self.slider_speed_scale.valueChanged.connect(self.worker.set_speed_scale_max)
+        self.slider_speed_scale.valueChanged.connect(
+            lambda v: self.lbl_speed_scale_val.setText(f"{v} px/s"))
         self.chk_zoom_participant.toggled.connect(self.worker.set_zoom_participant)
         self.btn_set_zoom_region.clicked.connect(self.on_set_zoom_region)
         self.btn_reset_zoom_region.clicked.connect(self.on_reset_zoom_region)
@@ -1945,11 +2037,11 @@ class MainWindow(QWidget):
     def on_swallow_toggled(self, checked: bool):
         if checked:
             self.worker.start_swallow()
-            self.btn_swallow.setText("Mark Swallow End")
+            self.btn_swallow.setText("Mark Swallow End (Ctrl+S)")
             self.btn_swallow.setStyleSheet("background-color: #cc2222; color: white; font-weight: bold;")
         else:
             self.worker.end_swallow()
-            self.btn_swallow.setText("Mark Swallow Start")
+            self.btn_swallow.setText("Mark Swallow Start (Ctrl+S)")
             self.btn_swallow.setStyleSheet("")
 
     @Slot()
