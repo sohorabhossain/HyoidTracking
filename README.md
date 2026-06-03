@@ -20,6 +20,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Adjustable shading** — control box width, opacity range, and number of shading steps
 - **Swallow marking** — one-click toggle to record tracker trajectories for each swallow event; completed trails are drawn on the Participant View in distinct colors, with the active trial shown in white
 - **Configurable trail history** — choose how many past swallow trajectories to display (1–20); clear all recorded trajectories at any time with the **Clear Trajectories** button
+- **Strength metric selector** — choose between **Displacement** (start-to-end distance) or **Arc Length** (total path length) for the Mode 4 strength meter; each metric maintains its own auto-scaling range
 - **Participant view zoom** — optionally zoom the Participant View into the region around the gradient box; supports auto-zoom (based on box position) or a custom zoom region drawn on the Experimenter View
 - **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
 - **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`
@@ -57,7 +58,7 @@ python Scripts/muti_tracker_with_overlay_2.py
    - `1` — Copy: mirrored frame only
    - `2` — Black+Box: black background with stepped-gradient reference box + tracker dots
    - `3` — Frame+Box: frame background with reference box + tracker dots
-   - `4` — Strength Meter: real-time swallow strength bar showing horizontal excursion of the tracked target; displays current and past swallow markers with an auto-scaling gauge
+   - `4` — Strength Meter: real-time swallow strength bar showing target excursion with selectable metric (**Displacement** — straight-line distance from start to end, or **Arc Length** — total path length); color gradient runs red→green (low→high); independent auto-scaling per metric; past swallow markers shown on the left of the bar
    - `5` — Speedometer: circular gauge showing peak swallow speed (px/s); updates live during an active swallow and holds the last peak value between swallows; auto-scaling
 5. Check **Move Box** to drag the reference box horizontally in either view (double-click to reset); enable **Show box on main view** to mirror it on the Experimenter View
 6. Click **Adjust Shaded Box Width** or **Box Shading** to fine-tune the overlay appearance

@@ -450,11 +450,13 @@ class VideoThread(QThread):
         self.zoom_participant = False     # zoom participant view around the gradient box
         self.zoom_region = None          # None = auto; (x,y,w,h) in secondary-image coords = manual
         # mode-4 strength meter
-        self.last_swallow_excursion = 0.0   # horizontal range of last completed swallow (frame px)
-        self.strength_scale_max = 200.0     # top of scale (frame px); auto-expands
+        self.last_swallow_excursion = 0.0       # excursion of last completed swallow (frame px)
+        self.strength_scale_max_displacement = 30.0   # auto-expands independently per metric
+        self.strength_scale_max_arc_length   = 500.0
+        self.strength_metric = "displacement"  # "displacement" or "arc_length"
         # mode-5 speedometer
         self.last_swallow_peak_speed = 0.0  # peak speed of last completed swallow (frame px/s)
-        self.speed_scale_max = 500.0        # top of speedometer scale (frame px/s); auto-expands
+        self.speed_scale_max = 2500.0        # top of speedometer scale (frame px/s); auto-expands
         # cached last frame for forced re-renders (e.g. when trails toggled while paused)
         self._last_sec_frame = None
         self._last_tracker_centers = []
@@ -717,21 +719,32 @@ class VideoThread(QThread):
                 if len(self.current_swallow_trail) >= 2:
                     _n_tr = max(len(_fp) for _fp in self.current_swallow_trail)
                     _cur_exc = 0.0
-                    for _ti in range(_n_tr):
-                        _tot = 0.0
-                        for _fi in range(1, len(self.current_swallow_trail)):
-                            _pp = self.current_swallow_trail[_fi - 1]
-                            _cp = self.current_swallow_trail[_fi]
-                            if _ti < len(_pp) and _ti < len(_cp):
-                                _ddx = _cp[_ti][0] - _pp[_ti][0]
-                                _ddy = _cp[_ti][1] - _pp[_ti][1]
-                                _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
-                        _cur_exc = max(_cur_exc, _tot)
+                    if self.strength_metric == "displacement":
+                        _first_fr = self.current_swallow_trail[0]
+                        _last_fr  = self.current_swallow_trail[-1]
+                        for _ti in range(_n_tr):
+                            if _ti < len(_first_fr) and _ti < len(_last_fr):
+                                _ddx = _last_fr[_ti][0] - _first_fr[_ti][0]
+                                _ddy = _last_fr[_ti][1] - _first_fr[_ti][1]
+                                _cur_exc = max(_cur_exc, math.sqrt(_ddx * _ddx + _ddy * _ddy))
+                    else:  # arc_length
+                        for _ti in range(_n_tr):
+                            _tot = 0.0
+                            for _fi in range(1, len(self.current_swallow_trail)):
+                                _pp = self.current_swallow_trail[_fi - 1]
+                                _cp = self.current_swallow_trail[_fi]
+                                if _ti < len(_pp) and _ti < len(_cp):
+                                    _ddx = _cp[_ti][0] - _pp[_ti][0]
+                                    _ddy = _cp[_ti][1] - _pp[_ti][1]
+                                    _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
+                            _cur_exc = max(_cur_exc, _tot)
                 else:
                     _cur_exc = 0.0
             else:
                 _cur_exc = self.last_swallow_excursion
-            _scale_max = max(1.0, self.strength_scale_max)
+            _scale_max = max(1.0, self.strength_scale_max_displacement
+                            if self.strength_metric == "displacement"
+                            else self.strength_scale_max_arc_length)
             _ratio = min(1.0, _cur_exc / _scale_max)
 
             # --- layout ---
@@ -742,13 +755,13 @@ class VideoThread(QThread):
             _bar_bot  = int(half_h * 0.84)
             _bar_h    = max(1, _bar_bot - _bar_top)
 
-            # --- draw full gradient background of bar (green→yellow→red bottom→top) ---
+            # --- draw full gradient background of bar (red→yellow→green bottom→top) ---
             _full_ys = np.linspace(0.0, 1.0, _bar_h, dtype=np.float32)  # 0=bottom,1=top
             _bar_B = np.zeros(_bar_h, dtype=np.uint8)
-            _bar_G = np.where(_full_ys < 0.5,
+            _bar_R = np.where(_full_ys < 0.5,
                               200,
                               np.clip(200 - (_full_ys - 0.5) * 400, 0, 200)).astype(np.uint8)
-            _bar_R = np.where(_full_ys < 0.5,
+            _bar_G = np.where(_full_ys < 0.5,
                               np.clip(_full_ys * 400, 0, 200),
                               200).astype(np.uint8)
             _bar_colors = np.stack([_bar_B, _bar_G, _bar_R], axis=1)  # (H,3)
@@ -815,13 +828,18 @@ class VideoThread(QThread):
 
             # --- title and labels ---
             _title_x = max(4, _bar_x - int(half_w * 0.15))
-            cv2.putText(sec, "SWALLOW", (_title_x, _bar_top - 22),
+            _lh = max(16, int(_font_sc * 1.2 * 28))
+            cv2.putText(sec, "SWALLOW", (_title_x, _bar_top - _lh - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
-            cv2.putText(sec, "STRENGTH", (_title_x, _bar_top - 8),
+            cv2.putText(sec, "STRENGTH", (_title_x, _bar_top - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
             cv2.putText(sec, f"{_cur_exc:.1f} px",
                         (_bar_x, _bar_bot + int(half_h * 0.055)),
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.1, (255, 255, 255), 1)
+            _metric_lbl = "Disp." if self.strength_metric == "displacement" else "Arc Len."
+            cv2.putText(sec, _metric_lbl,
+                        (_bar_x, _bar_bot + int(half_h * 0.10)),
+                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 0.85, (160, 160, 160), 1)
             cv2.putText(sec, f"Swallows: {self.swallow_count}",
                         (int(half_w * 0.55), int(half_h * 0.94)),
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc, (200, 200, 200), 1)
@@ -870,11 +888,11 @@ class VideoThread(QThread):
                 _y0 = int(_cy + _r * math.sin(_a0))
                 _x1 = int(_cx + _r * math.cos(_a1))
                 _y1 = int(_cy + _r * math.sin(_a1))
-                # BGR color along arc: green(0,200,0)→yellow(0,200,200)→red(0,0,200)
+                # BGR color along arc: red(0,0,200)→yellow(0,200,200)→green(0,200,0)
                 if _t0 < 0.5:
-                    _sc = (_B, _G, _R) = (0, 200, int(_t0 * 2 * 200))
+                    _sc = (_B, _G, _R) = (0, int(_t0 * 2 * 200), 200)
                 else:
-                    _sc = (_B, _G, _R) = (0, int((1.0 - (_t0 - 0.5) * 2) * 200), 200)
+                    _sc = (_B, _G, _R) = (0, 200, int((1.0 - (_t0 - 0.5) * 2) * 200))
                 if _t0 > _ratio:
                     _sc = (_B // 5, _G // 5, _R // 5)
                 cv2.line(sec, (_x0, _y0), (_x1, _y1), _sc, _athk)
@@ -1318,23 +1336,36 @@ class VideoThread(QThread):
             self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
             self.swallow_count += 1
             self.swallow_count_changed.emit(self.swallow_count)
-            # compute Cartesian excursion (total arc length) for mode-4 strength meter
+            # compute excursion for mode-4 strength meter (displacement or arc length)
             if len(self.current_swallow_trail) >= 2:
                 _n_tr = max(len(_fp) for _fp in self.current_swallow_trail)
                 _max_exc = 0.0
-                for _ti in range(_n_tr):
-                    _tot = 0.0
-                    for _fi in range(1, len(self.current_swallow_trail)):
-                        _pp = self.current_swallow_trail[_fi - 1]
-                        _cp = self.current_swallow_trail[_fi]
-                        if _ti < len(_pp) and _ti < len(_cp):
-                            _ddx = _cp[_ti][0] - _pp[_ti][0]
-                            _ddy = _cp[_ti][1] - _pp[_ti][1]
-                            _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
-                    _max_exc = max(_max_exc, _tot)
+                if self.strength_metric == "displacement":
+                    _first_fr = self.current_swallow_trail[0]
+                    _last_fr  = self.current_swallow_trail[-1]
+                    for _ti in range(_n_tr):
+                        if _ti < len(_first_fr) and _ti < len(_last_fr):
+                            _ddx = _last_fr[_ti][0] - _first_fr[_ti][0]
+                            _ddy = _last_fr[_ti][1] - _first_fr[_ti][1]
+                            _max_exc = max(_max_exc, math.sqrt(_ddx * _ddx + _ddy * _ddy))
+                else:  # arc_length
+                    for _ti in range(_n_tr):
+                        _tot = 0.0
+                        for _fi in range(1, len(self.current_swallow_trail)):
+                            _pp = self.current_swallow_trail[_fi - 1]
+                            _cp = self.current_swallow_trail[_fi]
+                            if _ti < len(_pp) and _ti < len(_cp):
+                                _ddx = _cp[_ti][0] - _pp[_ti][0]
+                                _ddy = _cp[_ti][1] - _pp[_ti][1]
+                                _tot += math.sqrt(_ddx * _ddx + _ddy * _ddy)
+                        _max_exc = max(_max_exc, _tot)
                 self.last_swallow_excursion = _max_exc
-                if self.last_swallow_excursion > self.strength_scale_max:
-                    self.strength_scale_max = self.last_swallow_excursion * 1.2
+                if self.strength_metric == "displacement":
+                    if _max_exc > self.strength_scale_max_displacement:
+                        self.strength_scale_max_displacement = _max_exc * 1.2
+                else:
+                    if _max_exc > self.strength_scale_max_arc_length:
+                        self.strength_scale_max_arc_length = _max_exc * 1.2
             # compute peak speed for mode-5 speedometer
             if len(self.current_swallow_trail) >= 2:
                 _peak = 0.0
@@ -1354,6 +1385,10 @@ class VideoThread(QThread):
     def set_n_swallow_display(self, n: int):
         self.n_swallow_display = max(1, n)
         self.swallow_trails = self.swallow_trails[-self.n_swallow_display:]
+
+    @Slot(str)
+    def set_strength_metric(self, metric: str):
+        self.strength_metric = metric
 
     @Slot(bool)
     def set_show_swallow_trails(self, enabled: bool):
@@ -1449,6 +1484,12 @@ class MainWindow(QWidget):
         self.chk_show_trails = QCheckBox("Show swallow trajectories")
         self.chk_show_trails.setChecked(True)
         self.btn_clear_trails = QPushButton("Clear Trajectories")
+        strength_metric_row = QHBoxLayout()
+        strength_metric_row.addWidget(QLabel("Strength metric:"))
+        self.combo_strength_metric = QComboBox()
+        self.combo_strength_metric.addItem("Displacement", "displacement")
+        self.combo_strength_metric.addItem("Arc Length", "arc_length")
+        strength_metric_row.addWidget(self.combo_strength_metric)
         self.chk_zoom_participant = QCheckBox("Zoom participant view")
         self.chk_zoom_participant.setToolTip(
             "Zooms the participant view to the region from one box-width\n"
@@ -1491,6 +1532,7 @@ class MainWindow(QWidget):
         vbox.addLayout(swallow_n_row)
         vbox.addWidget(self.chk_show_trails)
         vbox.addWidget(self.btn_clear_trails)
+        vbox.addLayout(strength_metric_row)
         vbox.addWidget(self.chk_zoom_participant)
         vbox.addLayout(zoom_region_row)
         vbox.addSpacing(6)
@@ -1552,6 +1594,9 @@ class MainWindow(QWidget):
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
         self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
         self.btn_clear_trails.clicked.connect(self.worker.clear_swallow_trails)
+        self.combo_strength_metric.currentIndexChanged.connect(
+            lambda: self.worker.set_strength_metric(self.combo_strength_metric.currentData())
+        )
         self.chk_zoom_participant.toggled.connect(self.worker.set_zoom_participant)
         self.btn_set_zoom_region.clicked.connect(self.on_set_zoom_region)
         self.btn_reset_zoom_region.clicked.connect(self.on_reset_zoom_region)
