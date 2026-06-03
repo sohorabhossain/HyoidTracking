@@ -1382,12 +1382,13 @@ class VideoThread(QThread):
                 _max_exc = 0.0
                 if self.strength_metric == "displacement":
                     _first_fr = self.current_swallow_trail[0]
-                    _last_fr  = self.current_swallow_trail[-1]
-                    for _ti in range(_n_tr):
-                        if _ti < len(_first_fr) and _ti < len(_last_fr):
-                            _ddx = _last_fr[_ti][0] - _first_fr[_ti][0]
-                            _ddy = _last_fr[_ti][1] - _first_fr[_ti][1]
-                            _max_exc = max(_max_exc, math.sqrt(_ddx * _ddx + _ddy * _ddy))
+                    for _fi in range(1, len(self.current_swallow_trail)):
+                        _cur_fr = self.current_swallow_trail[_fi]
+                        for _ti in range(_n_tr):
+                            if _ti < len(_first_fr) and _ti < len(_cur_fr):
+                                _ddx = _cur_fr[_ti][0] - _first_fr[_ti][0]
+                                _ddy = _cur_fr[_ti][1] - _first_fr[_ti][1]
+                                _max_exc = max(_max_exc, math.sqrt(_ddx * _ddx + _ddy * _ddy))
                 else:  # arc_length
                     for _ti in range(_n_tr):
                         _tot = 0.0
