@@ -35,6 +35,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 
 | Shortcut | Action |
 |---|---|
+| `Ctrl+M` | Screen Mirror Region |
 | `Ctrl+I` | Select ROIs |
 | `Ctrl+T` | Start Tracking |
 | `Ctrl+R` | Reinit Selected Tracker |

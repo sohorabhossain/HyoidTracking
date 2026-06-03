@@ -1498,7 +1498,7 @@ class MainWindow(QWidget):
         # controls on right
         self.spin_num = QSpinBox(); self.spin_num.setMinimum(1); self.spin_num.setValue(num_of_tracker); self.spin_num.setMaximum(20)
         self.chk_kf = QCheckBox("Use Kalman Filter"); self.chk_kf.setChecked(bool(use_kf))
-        self.btn_load = QPushButton("Screen Mirror Region")
+        self.btn_load = QPushButton("Screen Mirror Region (Ctrl+M)")
         self.btn_select_rois = QPushButton("Select ROIs (Ctrl+I)")
         self.btn_start = QPushButton("Start Tracking (Ctrl+T)")
         self.btn_pause = QPushButton("Pause/Resume (Ctrl+P)")
@@ -1695,6 +1695,7 @@ class MainWindow(QWidget):
 
         # connections
         # hotkeys
+        QShortcut(QKeySequence("Ctrl+M"), self).activated.connect(self.btn_load.click)
         QShortcut(QKeySequence("Ctrl+I"), self).activated.connect(self.btn_select_rois.click)
         QShortcut(QKeySequence("Ctrl+R"), self).activated.connect(self.btn_reinit.click)
         QShortcut(QKeySequence("Ctrl+T"), self).activated.connect(self.btn_start.click)
