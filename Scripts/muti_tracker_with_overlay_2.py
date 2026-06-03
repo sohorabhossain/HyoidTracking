@@ -837,20 +837,21 @@ class VideoThread(QThread):
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
             cv2.putText(sec, "STRENGTH", (_title_x, _bar_top - 4),
                         cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.2, (220, 220, 220), 1)
-            cv2.putText(sec, f"{_cur_exc:.1f} px",
-                        (_bar_x, _bar_bot + int(half_h * 0.055)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.1, (255, 255, 255), 1)
-            _metric_lbl = "Disp." if self.strength_metric == "displacement" else "Arc Len."
-            cv2.putText(sec, _metric_lbl,
-                        (_bar_x, _bar_bot + int(half_h * 0.10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 0.85, (160, 160, 160), 1)
-            cv2.putText(sec, f"Swallows: {self.swallow_count}",
-                        (int(half_w * 0.55), int(half_h * 0.94)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _font_sc, (200, 200, 200), 1)
-            if self.swallow_active:
-                cv2.putText(sec, "LIVE",
-                            (int(half_w * 0.72), _bar_top + int(half_h * 0.04)),
-                            cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.4, (0, 80, 255), 2)
+            if self.show_participant_labels:
+                cv2.putText(sec, f"{_cur_exc:.1f} px",
+                            (_bar_x, _bar_bot + int(half_h * 0.055)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.1, (255, 255, 255), 1)
+                _metric_lbl = "Disp." if self.strength_metric == "displacement" else "Arc Len."
+                cv2.putText(sec, _metric_lbl,
+                            (_bar_x, _bar_bot + int(half_h * 0.10)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 0.85, (160, 160, 160), 1)
+                cv2.putText(sec, f"Swallows: {self.swallow_count}",
+                            (int(half_w * 0.55), int(half_h * 0.94)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _font_sc, (200, 200, 200), 1)
+                if self.swallow_active:
+                    cv2.putText(sec, "LIVE",
+                                (int(half_w * 0.72), _bar_top + int(half_h * 0.04)),
+                                cv2.FONT_HERSHEY_SIMPLEX, _font_sc * 1.4, (0, 80, 255), 2)
         elif mode == 5:  # speedometer
             sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
             # --- current speed to display (rolling max over last 5 frames while live) ---
@@ -902,30 +903,32 @@ class VideoThread(QThread):
                 cv2.line(sec, (_x0, _y0), (_x1, _y1), _sc, _athk)
 
             # --- major ticks and labels (5 marks: 0 / 25 / 50 / 75 / 100 %) ---
-            for _pct in [0, 25, 50, 75, 100]:
-                _ta = math.radians(135.0 + _pct / 100.0 * 270.0)
-                _cos_ta, _sin_ta = math.cos(_ta), math.sin(_ta)
-                _ox = int(_cx + _r * 1.04 * _cos_ta)
-                _oy = int(_cy + _r * 1.04 * _sin_ta)
-                _ix = int(_cx + _r * 0.82 * _cos_ta)
-                _iy = int(_cy + _r * 0.82 * _sin_ta)
-                cv2.line(sec, (_ix, _iy), (_ox, _oy), (200, 200, 200), 2)
-                _lx = int(_cx + _r * 1.22 * _cos_ta) - 14
-                _ly = int(_cy + _r * 1.22 * _sin_ta) + 4
-                cv2.putText(sec, f"{_pct / 100.0 * _spd_scale:.0f}",
-                            (_lx, _ly), cv2.FONT_HERSHEY_SIMPLEX,
-                            _fsc * 0.85, (160, 160, 160), 1)
+            if self.show_participant_labels:
+                for _pct in [0, 25, 50, 75, 100]:
+                    _ta = math.radians(135.0 + _pct / 100.0 * 270.0)
+                    _cos_ta, _sin_ta = math.cos(_ta), math.sin(_ta)
+                    _ox = int(_cx + _r * 1.04 * _cos_ta)
+                    _oy = int(_cy + _r * 1.04 * _sin_ta)
+                    _ix = int(_cx + _r * 0.82 * _cos_ta)
+                    _iy = int(_cy + _r * 0.82 * _sin_ta)
+                    cv2.line(sec, (_ix, _iy), (_ox, _oy), (200, 200, 200), 2)
+                    _lx = int(_cx + _r * 1.22 * _cos_ta) - 14
+                    _ly = int(_cy + _r * 1.22 * _sin_ta) + 4
+                    cv2.putText(sec, f"{_pct / 100.0 * _spd_scale:.0f}",
+                                (_lx, _ly), cv2.FONT_HERSHEY_SIMPLEX,
+                                _fsc * 0.85, (160, 160, 160), 1)
 
             # --- minor ticks (every 10 %) ---
-            for _pct10 in range(0, 101, 10):
-                if _pct10 % 25 == 0:
-                    continue
-                _ta = math.radians(135.0 + _pct10 / 100.0 * 270.0)
-                _ox = int(_cx + _r * 1.04 * math.cos(_ta))
-                _oy = int(_cy + _r * 1.04 * math.sin(_ta))
-                _ix = int(_cx + _r * 0.93 * math.cos(_ta))
-                _iy = int(_cy + _r * 0.93 * math.sin(_ta))
-                cv2.line(sec, (_ix, _iy), (_ox, _oy), (110, 110, 110), 1)
+            if self.show_participant_labels:
+                for _pct10 in range(0, 101, 10):
+                    if _pct10 % 25 == 0:
+                        continue
+                    _ta = math.radians(135.0 + _pct10 / 100.0 * 270.0)
+                    _ox = int(_cx + _r * 1.04 * math.cos(_ta))
+                    _oy = int(_cy + _r * 1.04 * math.sin(_ta))
+                    _ix = int(_cx + _r * 0.93 * math.cos(_ta))
+                    _iy = int(_cy + _r * 0.93 * math.sin(_ta))
+                    cv2.line(sec, (_ix, _iy), (_ox, _oy), (110, 110, 110), 1)
 
             # --- needle ---
             _na    = math.radians(135.0 + _ratio * 270.0)
@@ -943,23 +946,25 @@ class VideoThread(QThread):
                         cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.15, (220, 220, 220), 1)
 
             # --- value inside gauge ---
-            _vstr = f"{_cur_spd:.1f} px/s"
-            _vw   = cv2.getTextSize(_vstr, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, 1)[0][0]
-            cv2.putText(sec, _vstr, (_cx - _vw // 2, int(_cy + _r * 0.36)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, (255, 255, 255), 1)
-            _lbl2 = "(peak)" if not self.swallow_active else "(live)"
-            _lw   = cv2.getTextSize(_lbl2, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, 1)[0][0]
-            cv2.putText(sec, _lbl2, (_cx - _lw // 2, int(_cy + _r * 0.52)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, (160, 160, 160), 1)
+            if self.show_participant_labels:
+                _vstr = f"{_cur_spd:.1f} px/s"
+                _vw   = cv2.getTextSize(_vstr, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, 1)[0][0]
+                cv2.putText(sec, _vstr, (_cx - _vw // 2, int(_cy + _r * 0.36)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.1, (255, 255, 255), 1)
+                _lbl2 = "(peak)" if not self.swallow_active else "(live)"
+                _lw   = cv2.getTextSize(_lbl2, cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, 1)[0][0]
+                cv2.putText(sec, _lbl2, (_cx - _lw // 2, int(_cy + _r * 0.52)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _fsc * 0.8, (160, 160, 160), 1)
 
             # --- swallow count & LIVE badge ---
-            cv2.putText(sec, f"Swallows: {self.swallow_count}",
-                        (int(half_w * 0.05), int(half_h * 0.95)),
-                        cv2.FONT_HERSHEY_SIMPLEX, _fsc, (200, 200, 200), 1)
-            if self.swallow_active:
-                cv2.putText(sec, "LIVE",
-                            (int(half_w * 0.76), int(half_h * 0.10)),
-                            cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.4, (0, 80, 255), 2)
+            if self.show_participant_labels:
+                cv2.putText(sec, f"Swallows: {self.swallow_count}",
+                            (int(half_w * 0.05), int(half_h * 0.95)),
+                            cv2.FONT_HERSHEY_SIMPLEX, _fsc, (200, 200, 200), 1)
+                if self.swallow_active:
+                    cv2.putText(sec, "LIVE",
+                                (int(half_w * 0.76), int(half_h * 0.10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, _fsc * 1.4, (0, 80, 255), 2)
         else:
             sec = cv2.resize(frame, (half_w, half_h))
 
@@ -1497,6 +1502,13 @@ class MainWindow(QWidget):
         # Toggle to mirror gradient box onto the main (experimenter) view
         self.chk_show_box_main = QCheckBox("Show box on main view")
         self.chk_show_box_main.setChecked(True)
+        self.chk_show_participant_labels = QCheckBox("Show participant labels")
+        self.chk_show_participant_labels.setChecked(True)
+        self.chk_show_participant_labels.setToolTip(
+            "Show/hide scale marks, live/peak values, swallow count,\n"
+            "metric label, and LIVE badge on the participant screen\n"
+            "(mode 4 and 5). Title text is always visible."
+        )
 
         # Swallow marking controls
         self.btn_swallow = QPushButton("Mark Swallow Start (Ctrl+S)")
@@ -1586,6 +1598,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.btn_box_width)
         vbox.addWidget(self.btn_box_shading)
         vbox.addWidget(self.chk_show_box_main)
+        vbox.addWidget(self.chk_show_participant_labels)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Swallow Marking:"))
         vbox.addWidget(self.btn_swallow)
@@ -1674,6 +1687,7 @@ class MainWindow(QWidget):
         self.btn_swallow.toggled.connect(self.on_swallow_toggled)
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
         self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
+        self.chk_show_participant_labels.toggled.connect(self.worker.set_show_participant_labels)
         self.btn_clear_trails.clicked.connect(self.worker.clear_swallow_trails)
         self.combo_strength_metric.currentIndexChanged.connect(
             lambda: self.worker.set_strength_metric(self.combo_strength_metric.currentData())

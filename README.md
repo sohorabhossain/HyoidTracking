@@ -22,6 +22,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Configurable trail history** — choose how many past swallow trajectories to display (1–20); clear all recorded trajectories at any time with the **Clear Trajectories** button
 - **Strength metric selector** — choose between **Displacement** (straight-line distance from start to end; default) or **Arc Length** (cumulative frame-to-frame path length) for the Mode 4 strength meter; each metric maintains its own independently auto-scaling range (Displacement starts at 30 px, Arc Length at 500 px)
 - **Scale settings** — per-metric sliders to manually set the maximum scale range for Mode 4 (Displacement: 1–500 px; Arc Length: 1–5000 px) and Mode 5 (Speed: 100–10000 px/s); independent auto-expand checkboxes for the strength scale and speed scale
+- **Participant label toggle** — **Show participant labels** checkbox instantly hides or reveals all non-title overlays on the participant screen in Mode 4 and 5 (scale tick marks and values, live/peak readout, metric label, swallow count, LIVE badge); the mode title ("SWALLOW STRENGTH" / "SWALLOW SPEED") is always shown
 - **Participant view zoom** — optionally zoom the Participant View into the region around the gradient box; supports auto-zoom (based on box position) or a custom zoom region drawn on the Experimenter View
 - **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
 - **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`
@@ -94,8 +95,9 @@ python Scripts/muti_tracker_with_overlay_2.py
     - **Arc max** slider — set the Arc Length scale ceiling (1–5000 px; default 500)
     - **Auto-expand speed scale** — same auto-expand behaviour for the Mode 5 speedometer
     - **Speed max** slider — set the speed scale ceiling (100–10000 px/s; default 2500)
-11. **Zoom Participant View** — check **Zoom participant view** to zoom into the area around the gradient box; click **Set Zoom Region** to draw a custom zoom area on the Experimenter View, or **Reset to Auto** to revert to automatic zoom
-12. **Export CSV** — save all tracking data to a `.csv` file
+11. **Participant labels** — uncheck **Show participant labels** to hide all non-title overlays on the participant screen (scale marks, numeric values, swallow count, LIVE badge) while keeping the mode title visible; re-check to restore them
+12. **Zoom Participant View** — check **Zoom participant view** to zoom into the area around the gradient box; click **Set Zoom Region** to draw a custom zoom area on the Experimenter View, or **Reset to Auto** to revert to automatic zoom
+13. **Export CSV** — save all tracking data to a `.csv` file
 
 ---
 
