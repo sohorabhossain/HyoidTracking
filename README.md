@@ -13,7 +13,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Manual re-initialization** — draw a new ROI at any time to reset any tracker; the tracker selection dropdown and Reinit button are grouped together near the top of the control panel for quick access
 - **Trail visualization** — per-tracker motion trails (last 40 frames)
 - **Dual-window output**
-  - Experimenter View: full annotated feed with bounding boxes and FPS; control panel is scrollable so all controls are always reachable regardless of window height
+  - Experimenter View: full annotated feed with bounding boxes and FPS; control panel is scrollable so all controls are always reachable regardless of window height; automatically opens on the second screen when two or more monitors are connected (configurable via `moveExperimenterViewToSecondScreen`)
   - Participant View: configurable overlay with five modes (raw frame / black + gradient box / frame + gradient box / swallow strength meter / swallow speedometer)
 - **Draggable gradient box** — drag the shaded reference box horizontally in both the Participant View and the Experimenter View; the two views stay in sync; double-click to reset
 - **Box overlay on experimenter view** — optional checkbox mirrors the gradient box onto the main display

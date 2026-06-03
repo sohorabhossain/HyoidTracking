@@ -1482,11 +1482,15 @@ class VideoThread(QThread):
 # MainWindow with slider + SecondaryWindow
 # ----------------------------
 class MainWindow(QWidget):
-    def __init__(self, num_of_tracker=2, use_kf=True):
+    def __init__(self, num_of_tracker=2, use_kf=True, moveExperimenterViewToSecondScreen=True):
         super().__init__()
         self.setWindowTitle("Experimenter View")
         self.resize(900, 585) #self.resize(1000, 650)
-        self.move(10, 10)
+        _screens = QGuiApplication.screens()
+        if moveExperimenterViewToSecondScreen and len(_screens) >= 2:
+            self.move(_screens[1].geometry().topLeft())
+        else:
+            self.move(10, 10)
 
         # left image label
         self.image_label = DrawableLabel()
@@ -2241,6 +2245,7 @@ class MainWindow(QWidget):
 # ----------------------------
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    w = MainWindow(num_of_tracker=1, use_kf=False)
+    moveExperimenterViewToSecondScreen = True
+    w = MainWindow(num_of_tracker=1, use_kf=False, moveExperimenterViewToSecondScreen=moveExperimenterViewToSecondScreen)
     w.show()
     sys.exit(app.exec())
