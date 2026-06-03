@@ -427,7 +427,7 @@ class VideoThread(QThread):
         self.frames_since_reinit = 0
 
         # secondary view mode (1,2,3) and manual override flag controlled by MainWindow
-        self.secondary_mode = 1
+        self.secondary_mode = 3
         self.secondary_manual_override = False
         # horizontal pixel offset for gradient box in modes 2 and 3
         self.box_x_offset = 0
@@ -464,6 +464,9 @@ class VideoThread(QThread):
         self._last_sec_frame = None
         self._last_tracker_centers = []
         self._request_secondary_redraw = False
+        # per-tracker circle color state for modes 2 & 3
+        self._circle_entered_box_time = []  # None or float timestamp when circle entered box
+        self._circle_yellow = []            # bool: True → draw yellow instead of red
 
         # writer
         self.video_writer = None
@@ -689,11 +692,25 @@ class VideoThread(QThread):
             sec[:, box_x:x_end] = (
                 sec[:, box_x:x_end].astype(np.float32) * (1 - alphas) + green * alphas
             ).astype(np.uint8)
-            # draw red circles for tracker positions mapped to half size
-            for (cx, cy) in tracker_centers:
+            # draw circles; turn yellow after 3 s inside/left of box, red once right of box
+            _n_c = len(tracker_centers)
+            while len(self._circle_entered_box_time) < _n_c:
+                self._circle_entered_box_time.append(None)
+                self._circle_yellow.append(False)
+            _now = time.time()
+            for _idx, (cx, cy) in enumerate(tracker_centers):
                 sx = int(cx * half_w / float(w))
                 sy = int(cy * half_h / float(h))
-                cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
+                if sx <= x_end:
+                    if self._circle_entered_box_time[_idx] is None:
+                        self._circle_entered_box_time[_idx] = _now
+                    if _now - self._circle_entered_box_time[_idx] >= 3.0:
+                        self._circle_yellow[_idx] = True
+                else:
+                    self._circle_entered_box_time[_idx] = None
+                    self._circle_yellow[_idx] = False
+                _clr = (0, 255, 255) if self._circle_yellow[_idx] else (0, 0, 255)
+                cv2.circle(sec, (sx, sy), 6, _clr, -1)
         elif mode == 3:  # frame background + gradient box + circles
             sec = cv2.resize(frame, (half_w, half_h))
             xmid = half_w // 2
@@ -711,10 +728,24 @@ class VideoThread(QThread):
             sec[:, box_x:x_end] = (
                 sec[:, box_x:x_end].astype(np.float32) * (1 - alphas) + green * alphas
             ).astype(np.uint8)
-            for (cx, cy) in tracker_centers:
+            _n_c = len(tracker_centers)
+            while len(self._circle_entered_box_time) < _n_c:
+                self._circle_entered_box_time.append(None)
+                self._circle_yellow.append(False)
+            _now = time.time()
+            for _idx, (cx, cy) in enumerate(tracker_centers):
                 sx = int(cx * half_w / float(w))
                 sy = int(cy * half_h / float(h))
-                cv2.circle(sec, (sx, sy), 6, (0, 0, 255), -1)
+                if sx <= x_end:
+                    if self._circle_entered_box_time[_idx] is None:
+                        self._circle_entered_box_time[_idx] = _now
+                    if _now - self._circle_entered_box_time[_idx] >= 3.0:
+                        self._circle_yellow[_idx] = True
+                else:
+                    self._circle_entered_box_time[_idx] = None
+                    self._circle_yellow[_idx] = False
+                _clr = (0, 255, 255) if self._circle_yellow[_idx] else (0, 0, 255)
+                cv2.circle(sec, (sx, sy), 6, _clr, -1)
         elif mode == 4:  # swallow strength meter
             sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
             # --- current excursion to display ---

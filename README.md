@@ -24,6 +24,7 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Scale settings** — per-metric sliders to manually set the maximum scale range for Mode 4 (Displacement: 1–500 px; Arc Length: 1–5000 px) and Mode 5 (Speed: 100–10000 px/s); independent auto-expand checkboxes for the strength scale and speed scale
 - **Participant label toggle** — **Show participant labels** checkbox instantly hides or reveals all non-title overlays on the participant screen in Mode 4 and 5 (scale tick marks and values, live/peak readout, metric label, swallow count, LIVE badge); the mode title ("SWALLOW STRENGTH" / "SWALLOW SPEED") is always shown
 - **Participant view zoom** — optionally zoom the Participant View into the region around the gradient box; supports auto-zoom (based on box position) or a custom zoom region drawn on the Experimenter View
+- **Tracker dot color feedback (modes 2 & 3)** — tracker circles start red; once a circle enters or passes to the left of the gradient box and remains there for 3 continuous seconds (without exiting through the right side), it turns yellow; the circle reverts to red as soon as it moves back to the right of the box
 - **CSV export** — per-frame, per-tracker data: measured position, Kalman-smoothed position, re-init flags
 - **Video recording** — saves the annotated feed to `tracked_output_gui.mp4`
 - **Keyboard shortcuts** — common actions are accessible without reaching for the mouse (see table below)
@@ -64,7 +65,7 @@ pip install opencv-contrib-python PySide6 numpy pandas
 ## Usage
 
 ```bash
-python Scripts/muti_tracker_with_overlay_2.py
+python Scripts/multi_tracker_with_overlay_2.py
 ```
 
 ### Workflow
@@ -75,8 +76,8 @@ python Scripts/muti_tracker_with_overlay_2.py
 4. Use **Pause/Resume** (`Ctrl+P`) to pause the feed at any time
 5. Use the **Overlay mode** slider (1–5) to switch the Participant View display:
    - `1` — Copy: mirrored frame only
-   - `2` — Black+Box: black background with stepped-gradient reference box + tracker dots
-   - `3` — Frame+Box: frame background with reference box + tracker dots
+   - `2` — Black+Box: black background with stepped-gradient reference box + tracker dots (dots turn **yellow** after 3 s inside/left of box; revert to **red** on exit to the right)
+   - `3` — Frame+Box: frame background with reference box + tracker dots (same color-feedback logic as mode 2)
    - `4` — Strength Meter: real-time swallow strength bar showing target excursion
      - Color gradient runs **red → green** (low → high strength)
      - Select metric: **Displacement** (default, start-to-end distance) or **Arc Length** (total path length)
