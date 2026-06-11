@@ -18,6 +18,8 @@ A real-time multi-target tracking tool built for ultrasound imaging research, de
 - **Draggable gradient box** — drag the shaded reference box horizontally in both the Participant View and the Experimenter View; the two views stay in sync; double-click to reset
 - **Box overlay on experimenter view** — optional checkbox mirrors the gradient box onto the main display
 - **Adjustable shading** — control box width, opacity range, and number of shading steps
+- **Adjustable tracker circle size** — slider (2–60 px diameter) to resize the tracker dots in Modes 2 & 3; updates live even while paused
+- **Live capture preview** — once a screen region is selected the Experimenter View continuously shows a live feed (~25 fps) before tracking starts, so the experimenter can monitor the region without pressing Start
 - **Swallow marking** — one-click toggle to record tracker trajectories for each swallow event; completed trails are drawn on the Participant View in distinct colors, with the active trial shown in white
 - **Configurable trail history** — choose how many past swallow trajectories to display (1–20); clear all recorded trajectories at any time with the **Clear Trajectories** button
 - **Strength metric selector** — choose between **Displacement** (maximum straight-line distance from the start position to any point during the swallow; default) or **Arc Length** (cumulative frame-to-frame path length) for the Mode 4 strength meter; each metric maintains its own independently auto-scaling range (Displacement starts at 30 px, Arc Length at 500 px)
@@ -131,9 +133,11 @@ python Scripts/multi_tracker_with_overlay_2.py
 ```
 HyoidTracking/
 ├── Scripts/
-│   ├── muti_tracker_with_overlay_2.py   # Main GUI application
+│   ├── multi_tracker_with_overlay_2.py  # Main GUI application
+│   ├── hyoid_tracking_main_code.py      # Rewritten version (feature-parity, clean codebase)
 │   ├── tracking_data.csv                # Example tracking output
 │   └── tracking_data_with_kalman.csv    # Example Kalman-filtered output
+├── other scripts/                       # Auxiliary and earlier tracker versions
 └── README.md
 ```
 

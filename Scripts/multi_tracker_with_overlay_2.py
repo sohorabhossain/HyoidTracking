@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from PySide6.QtCore import QThread, Signal, Slot, Qt, QRect, QPoint
+from PySide6.QtCore import QThread, Signal, Slot, Qt, QRect, QPoint, QTimer
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QGuiApplication, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
@@ -467,6 +467,7 @@ class VideoThread(QThread):
         # per-tracker circle color state for modes 2 & 3
         self._circle_entered_box_time = []  # None or float timestamp when circle entered box
         self._circle_yellow = []            # bool: True → draw yellow instead of red
+        self.circle_radius = 6              # tracker circle radius (px) in secondary modes 2 & 3
 
         # writer
         self.video_writer = None
@@ -710,7 +711,7 @@ class VideoThread(QThread):
                     self._circle_entered_box_time[_idx] = None
                     self._circle_yellow[_idx] = False
                 _clr = (0, 255, 255) if self._circle_yellow[_idx] else (0, 0, 255)
-                cv2.circle(sec, (sx, sy), 6, _clr, -1)
+                cv2.circle(sec, (sx, sy), self.circle_radius, _clr, -1)
         elif mode == 3:  # frame background + gradient box + circles
             sec = cv2.resize(frame, (half_w, half_h))
             xmid = half_w // 2
@@ -745,7 +746,7 @@ class VideoThread(QThread):
                     self._circle_entered_box_time[_idx] = None
                     self._circle_yellow[_idx] = False
                 _clr = (0, 255, 255) if self._circle_yellow[_idx] else (0, 0, 255)
-                cv2.circle(sec, (sx, sy), 6, _clr, -1)
+                cv2.circle(sec, (sx, sy), self.circle_radius, _clr, -1)
         elif mode == 4:  # swallow strength meter
             sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
             # --- current excursion to display ---
@@ -1456,6 +1457,11 @@ class VideoThread(QThread):
     def set_speed_scale_max(self, value: int):
         self.speed_scale_max = float(max(1, value))
 
+    @Slot(int)
+    def set_circle_radius(self, value: int):
+        self.circle_radius = max(1, int(value))
+        self._request_secondary_redraw = True
+
     @Slot(bool)
     def set_show_swallow_trails(self, enabled: bool):
         self.show_swallow_trails = bool(enabled)
@@ -1615,6 +1621,18 @@ class MainWindow(QWidget):
         spd_scale_row.addWidget(self.slider_speed_scale)
         spd_scale_row.addWidget(self.lbl_speed_scale_val)
 
+        # tracker circle diameter (modes 2 & 3)
+        circle_dia_row = QHBoxLayout()
+        circle_dia_row.addWidget(QLabel("Circle dia.:"))
+        self.slider_circle_dia = QSlider(Qt.Horizontal)
+        self.slider_circle_dia.setRange(2, 60)
+        self.slider_circle_dia.setValue(12)  # diameter = 2 * default radius (6)
+        self.slider_circle_dia.setTickPosition(QSlider.TicksBelow)
+        self.slider_circle_dia.setTickInterval(5)
+        self.lbl_circle_dia_val = QLabel("12 px")
+        circle_dia_row.addWidget(self.slider_circle_dia)
+        circle_dia_row.addWidget(self.lbl_circle_dia_val)
+
         # layout
         vbox = QVBoxLayout()
         vbox.addWidget(QLabel("Number of trackers:"))
@@ -1635,6 +1653,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.btn_box_shading)
         vbox.addWidget(self.chk_show_box_main)
         vbox.addWidget(self.chk_show_participant_labels)
+        vbox.addLayout(circle_dia_row)
         vbox.addSpacing(6)
         vbox.addWidget(QLabel("Swallow Marking:"))
         vbox.addWidget(self.btn_swallow)
@@ -1740,6 +1759,10 @@ class MainWindow(QWidget):
         self.slider_speed_scale.valueChanged.connect(self.worker.set_speed_scale_max)
         self.slider_speed_scale.valueChanged.connect(
             lambda v: self.lbl_speed_scale_val.setText(f"{v} px/s"))
+        self.slider_circle_dia.valueChanged.connect(
+            lambda v: self.worker.set_circle_radius(max(1, v // 2)))
+        self.slider_circle_dia.valueChanged.connect(
+            lambda v: self.lbl_circle_dia_val.setText(f"{v} px"))
         self.chk_zoom_participant.toggled.connect(self.worker.set_zoom_participant)
         self.btn_set_zoom_region.clicked.connect(self.on_set_zoom_region)
         self.btn_reset_zoom_region.clicked.connect(self.on_reset_zoom_region)
@@ -1751,10 +1774,30 @@ class MainWindow(QWidget):
         self.last_frame = None
         self.selecting_roi = False
 
+        # live preview of the capture region (shown before tracking starts)
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setInterval(40)  # ~25 fps
+        self.preview_timer.timeout.connect(self._update_preview)
+
         # ensure worker.secondary_mode starts as 1 (copy) until tracking starts
         self.worker.secondary_mode = 1
         self.slider.setValue(1)
         self.slider_label.setText("Mode 1: Copy")
+
+    def _update_preview(self):
+        # Continuously show the live capture region until tracking owns the view.
+        # Skip while the worker is running (it emits processed frames itself) or
+        # while a draw/ROI-selection loop is driving the display.
+        if self.worker.isRunning():
+            return
+        if self.selecting_roi or self.image_label.draw_mode:
+            return
+        if self.worker.capture_region is None:
+            return
+        frame = self.worker.grab_capture_frame()
+        if frame is not None:
+            self.last_frame = frame.copy()
+            self._display_frame(frame)
 
     @Slot()
     def on_load(self):
@@ -1810,6 +1853,9 @@ class MainWindow(QWidget):
             if frame is not None:
                 self.last_frame = frame.copy()
                 self._display_frame(frame)
+            # start the live preview so the experimenter view shows a continuous
+            # feed of the region (not just a single screenshot) before tracking
+            self.preview_timer.start()
             # Auto-select mode 1 until tracking starts, unless manual override
             if not self.secondary_manual_override:
                 self.worker.secondary_mode = 1
@@ -1836,6 +1882,10 @@ class MainWindow(QWidget):
         if self.worker.capture_region is None:
             QMessageBox.warning(self, "Warning", "Select a capture region first")
             return
+        # pause the worker so it stops emitting overlaid frames (boxes/trails),
+        # otherwise they keep redrawing over the clean ROI-selection frame
+        if self.worker.isRunning() and not self.worker.paused:
+            self.worker.paused = True
         frame = self.worker.grab_capture_frame()
         if frame is None:
             QMessageBox.warning(self, "Warning", "Could not capture frame for ROI selection")
