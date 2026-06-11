@@ -1,9 +1,7 @@
 """
-hyoid_tracking_code_by_Opus4_8.py
+hyoid_tracking_main_code.py
 
 Real-time multi-target hyoid-tracking tool for ultrasound research.
-
-Rewritten from scratch (feature-parity with multi_tracker_with_overlay_2.py).
 
 Provides a dual-window GUI:
   * Experimenter View  - setup, control panel, annotated feed with bounding boxes/FPS.
