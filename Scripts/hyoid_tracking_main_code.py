@@ -1,9 +1,7 @@
 """
-hyoid_tracking_code_by_Opus4_8.py
+hyoid_tracking_main_code.py
 
 Real-time multi-target hyoid-tracking tool for ultrasound research.
-
-Rewritten from scratch (feature-parity with multi_tracker_with_overlay_2.py).
 
 Provides a dual-window GUI:
   * Experimenter View  - setup, control panel, annotated feed with bounding boxes/FPS.
@@ -21,7 +19,7 @@ Core capabilities
   * Swallow strength meter (mode 4) and speedometer (mode 5).
   * Participant-view zoom (auto or custom region).
   * CSV export of per-frame/per-tracker data and annotated MP4 recording.
-  * Keyboard shortcuts for all common actions.
+  * Keyboard shortcuts for all common actions.hyoid_tracking_main_code.py
 
 Dependencies: opencv-contrib-python, PySide6, numpy, pandas
 """
@@ -42,7 +40,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QFileDialog, QSpinBox, QComboBox, QMessageBox, QCheckBox, QSizePolicy,
-    QSlider, QDialog, QDialogButtonBox, QScrollArea,
+    QSlider, QDialog, QDialogButtonBox, QScrollArea, QLineEdit,
 )
 
 # Output file names
@@ -149,6 +147,7 @@ def bgr_to_qimage(bgr):
 # =====================================================================
 class DrawableLabel(QLabel):
     box_offset_changed = Signal(int)   # absolute box_x_offset in secondary-image coords
+    measure_points_ready = Signal(QPoint, QPoint)  # two clicked points (widget coords)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,6 +159,11 @@ class DrawableLabel(QLabel):
         self.temp_rect = None
         self.draw_mode = False
         self.setMouseTracking(True)
+        # point-to-point measurement state
+        self.measure_mode = False
+        self._measure_pts = []       # up to 2 QPoint in widget coords
+        self._measure_preview = None  # live cursor point before the 2nd click
+        self._measure_text = ""      # distance label drawn near the line
         # box-drag state
         self._box_drag_mode = False
         self._box_drag_start_x = None
@@ -207,8 +211,39 @@ class DrawableLabel(QLabel):
         self.temp_rect = None
         self.update()
 
+    # --- point-to-point measurement ---
+    def enter_measure_mode(self):
+        self.measure_mode = True
+        self._measure_pts = []
+        self._measure_preview = None
+        self._measure_text = ""
+        self.setCursor(Qt.CrossCursor)
+        self.update()
+
+    def exit_measure_mode(self):
+        self.measure_mode = False
+        self._measure_pts = []
+        self._measure_preview = None
+        self._measure_text = ""
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def set_measure_text(self, text: str):
+        self._measure_text = text
+        self.update()
+
     # --- mouse events ---
     def mousePressEvent(self, event):
+        if self.measure_mode and event.button() == Qt.LeftButton:
+            if len(self._measure_pts) >= 2:      # start a fresh measurement
+                self._measure_pts = []
+                self._measure_text = ""
+            self._measure_pts.append(event.pos())
+            self._measure_preview = event.pos()
+            if len(self._measure_pts) == 2:
+                self.measure_points_ready.emit(self._measure_pts[0], self._measure_pts[1])
+            self.update()
+            return
         if self._box_drag_mode and event.button() == Qt.LeftButton:
             self._box_drag_start_x = event.pos().x()
             self._box_drag_start_offset = self._box_current_offset
@@ -221,6 +256,11 @@ class DrawableLabel(QLabel):
             self.update()
 
     def mouseMoveEvent(self, event):
+        if self.measure_mode:
+            if len(self._measure_pts) == 1:
+                self._measure_preview = event.pos()
+                self.update()
+            return
         if self._box_drag_mode and self._box_drag_start_x is not None:
             dx = event.pos().x() - self._box_drag_start_x
             dx_image = int(dx * self._sec_w / self._pix_w)
@@ -262,7 +302,34 @@ class DrawableLabel(QLabel):
         if self.temp_rect is not None:
             painter.setPen(QPen(Qt.yellow, 2))
             painter.drawRect(self.temp_rect)
+        if self.measure_mode and self._measure_pts:
+            self._paint_measurement(painter)
         painter.end()
+
+    def _paint_measurement(self, painter):
+        p0 = self._measure_pts[0]
+        p1 = self._measure_pts[1] if len(self._measure_pts) >= 2 else self._measure_preview
+        # connecting line
+        if p1 is not None:
+            painter.setPen(QPen(QColor(0, 220, 255), 2))
+            painter.drawLine(p0, p1)
+        # endpoint markers
+        painter.setPen(QPen(Qt.yellow, 2))
+        painter.setBrush(QColor(0, 220, 255))
+        for pt in self._measure_pts:
+            painter.drawEllipse(pt, 4, 4)
+        painter.setBrush(Qt.NoBrush)
+        # distance label near the midpoint
+        if self._measure_text and p1 is not None:
+            mx = (p0.x() + p1.x()) // 2
+            my = (p0.y() + p1.y()) // 2
+            metrics = painter.fontMetrics()
+            tw = metrics.horizontalAdvance(self._measure_text)
+            th = metrics.height()
+            bx, by = mx + 8, my - th - 4
+            painter.fillRect(bx - 3, by - 2, tw + 6, th + 4, QColor(0, 0, 0, 180))
+            painter.setPen(QPen(QColor(0, 220, 255), 1))
+            painter.drawText(bx, by + th - 4, self._measure_text)
 
 
 # =====================================================================
@@ -504,6 +571,7 @@ class VideoThread(QThread):
         self.last_swallow_peak_speed = 0.0
         self.speed_scale_max = 2500.0
         self.auto_expand_speed = True
+        self.speed_show_max = True    # show running max speed during a swallow (vs. live)
 
         # cached last frame for paused re-renders
         self._last_sec_frame = None
@@ -771,6 +839,19 @@ class VideoThread(QThread):
                 best = max(best, tot)
         return best
 
+    def _trail_peak_speed(self, trail):
+        """Max frame-to-frame speed (px/s) over all trackers across the trail."""
+        if len(trail) < 2:
+            return 0.0
+        peak = 0.0
+        for fi in range(1, len(trail)):
+            prev, curr = trail[fi - 1], trail[fi]
+            for ti in range(min(len(prev), len(curr))):
+                dx = curr[ti][0] - prev[ti][0]
+                dy = curr[ti][1] - prev[ti][1]
+                peak = max(peak, math.hypot(dx, dy) * self.fps_video)
+        return peak
+
     def _render_strength_meter(self, half_w, half_h):
         sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
         # current excursion (live during a swallow, else last completed)
@@ -857,19 +938,23 @@ class VideoThread(QThread):
 
     def _render_speedometer(self, half_w, half_h):
         sec = np.zeros((half_h, half_w, 3), dtype=np.uint8)
-        # current speed (rolling max over last 5 frames while live, else last peak)
+        # current speed during a swallow: running max over the swallow (speed_show_max)
+        # or rolling max over the last 5 frames (live); else the last completed peak.
         if self.swallow_active and len(self.current_swallow_trail) >= 2:
-            win = min(5, len(self.current_swallow_trail) - 1)
-            live_spd = 0.0
-            for wi in range(win):
-                fi = len(self.current_swallow_trail) - 1 - wi
-                ppts = self.current_swallow_trail[fi - 1]
-                cpts = self.current_swallow_trail[fi]
-                for ti in range(min(len(ppts), len(cpts))):
-                    dx = cpts[ti][0] - ppts[ti][0]
-                    dy = cpts[ti][1] - ppts[ti][1]
-                    live_spd = max(live_spd, math.hypot(dx, dy) * self.fps_video)
-            cur_spd = live_spd
+            if self.speed_show_max:
+                cur_spd = self._trail_peak_speed(self.current_swallow_trail)
+            else:
+                win = min(5, len(self.current_swallow_trail) - 1)
+                live_spd = 0.0
+                for wi in range(win):
+                    fi = len(self.current_swallow_trail) - 1 - wi
+                    ppts = self.current_swallow_trail[fi - 1]
+                    cpts = self.current_swallow_trail[fi]
+                    for ti in range(min(len(ppts), len(cpts))):
+                        dx = cpts[ti][0] - ppts[ti][0]
+                        dy = cpts[ti][1] - ppts[ti][1]
+                        live_spd = max(live_spd, math.hypot(dx, dy) * self.fps_video)
+                cur_spd = live_spd
         else:
             cur_spd = self.last_swallow_peak_speed
         spd_scale = max(1.0, self.speed_scale_max)
@@ -916,6 +1001,19 @@ class VideoThread(QThread):
                 ix = int(cx + r * 0.93 * math.cos(ta)); iy = int(cy + r * 0.93 * math.sin(ta))
                 cv2.line(sec, (ix, iy), (ox, oy), (110, 110, 110), 1)
 
+        # previous-swallow markers: peak speed of each prior swallow, drawn as
+        # radial ticks just outside the arc, dimmed by age (newest brightest)
+        n_prev = len(self.swallow_trails)
+        for pi, trail in enumerate(self.swallow_trails):
+            pspd = self._trail_peak_speed(trail)
+            pr = min(1.0, pspd / spd_scale)
+            pa = math.radians(135.0 + pr * 270.0)
+            cos_pa, sin_pa = math.cos(pa), math.sin(pa)
+            dim = max(60, 220 - (n_prev - 1 - pi) * 50)
+            ix = int(cx + (r - athk) * cos_pa); iy = int(cy + (r - athk) * sin_pa)
+            ox = int(cx + (r + athk) * cos_pa); oy = int(cy + (r + athk) * sin_pa)
+            cv2.line(sec, (ix, iy), (ox, oy), (dim, dim, dim), 2)
+
         # needle + hub
         na = math.radians(135.0 + ratio * 270.0)
         tip_x = int(cx + r * 0.80 * math.cos(na)); tip_y = int(cy + r * 0.80 * math.sin(na))
@@ -934,7 +1032,10 @@ class VideoThread(QThread):
             vw = cv2.getTextSize(vstr, cv2.FONT_HERSHEY_SIMPLEX, fsc * 1.1, 1)[0][0]
             cv2.putText(sec, vstr, (cx - vw // 2, int(cy + r * 0.36)),
                         cv2.FONT_HERSHEY_SIMPLEX, fsc * 1.1, (255, 255, 255), 1)
-            lbl2 = "(peak)" if not self.swallow_active else "(live)"
+            if not self.swallow_active:
+                lbl2 = "(peak)"
+            else:
+                lbl2 = "(max)" if self.speed_show_max else "(live)"
             lw = cv2.getTextSize(lbl2, cv2.FONT_HERSHEY_SIMPLEX, fsc * 0.8, 1)[0][0]
             cv2.putText(sec, lbl2, (cx - lw // 2, int(cy + r * 0.52)),
                         cv2.FONT_HERSHEY_SIMPLEX, fsc * 0.8, (160, 160, 160), 1)
@@ -1345,13 +1446,7 @@ class VideoThread(QThread):
                         self.strength_scale_max_arc_length = exc * 1.2
             # speedometer: peak frame-to-frame speed
             if len(self.current_swallow_trail) >= 2:
-                peak = 0.0
-                for fi in range(1, len(self.current_swallow_trail)):
-                    prev, curr = self.current_swallow_trail[fi - 1], self.current_swallow_trail[fi]
-                    for ti in range(min(len(prev), len(curr))):
-                        dx = curr[ti][0] - prev[ti][0]
-                        dy = curr[ti][1] - prev[ti][1]
-                        peak = max(peak, math.hypot(dx, dy) * self.fps_video)
+                peak = self._trail_peak_speed(self.current_swallow_trail)
                 self.last_swallow_peak_speed = peak
                 if self.auto_expand_speed and peak > self.speed_scale_max:
                     self.speed_scale_max = peak * 1.2
@@ -1373,6 +1468,10 @@ class VideoThread(QThread):
     @Slot(bool)
     def set_auto_expand_speed(self, enabled: bool):
         self.auto_expand_speed = bool(enabled)
+
+    @Slot(bool)
+    def set_speed_show_max(self, enabled: bool):
+        self.speed_show_max = bool(enabled)
 
     @Slot(bool)
     def set_show_participant_labels(self, enabled: bool):
@@ -1445,6 +1544,8 @@ class MainWindow(QWidget):
         self.last_frame = None
         self.selecting_roi = False
         self.secondary_manual_override = False
+        self.measuring = False
+        self._measure_img_size = None   # (w, h) of the frozen source frame
 
         # start in copy mode until tracking begins
         self.worker.secondary_mode = MODE_COPY
@@ -1528,6 +1629,18 @@ class MainWindow(QWidget):
         self.combo_strength_metric.addItem("Displacement", "displacement")
         self.combo_strength_metric.addItem("Arc Length", "arc_length")
 
+        # point-to-point measurement
+        self.btn_measure = QPushButton("Measure Distance (Ctrl+D)")
+        self.btn_measure.setCheckable(True)
+        self.btn_measure.setToolTip(
+            "Freeze the experimenter view and click two points to measure\n"
+            "the distance between them. Click again for a new measurement;\n"
+            "uncheck to resume the live feed."
+        )
+        self.measure_result = QLineEdit()
+        self.measure_result.setReadOnly(True)
+        self.measure_result.setPlaceholderText("Distance: -- px")
+
         self.chk_zoom_participant = QCheckBox("Zoom participant view")
         self.chk_zoom_participant.setToolTip(
             "Zooms the participant view to the region from one box-width\n"
@@ -1553,6 +1666,8 @@ class MainWindow(QWidget):
         self.slider_arc_scale.setRange(1, 5000)
         self.slider_arc_scale.setValue(500)
         self.lbl_arc_scale_val = QLabel("500 px")
+        self.chk_speed_show_max = QCheckBox("Show max speed during swallow")
+        self.chk_speed_show_max.setChecked(True)
         self.chk_auto_expand_speed = QCheckBox("Auto-expand speed scale")
         self.chk_auto_expand_speed.setChecked(True)
         self.slider_speed_scale = QSlider(Qt.Horizontal)
@@ -1601,6 +1716,11 @@ class MainWindow(QWidget):
         vbox.addWidget(self.chk_show_trails)
         vbox.addWidget(self.btn_clear_trails)
         vbox.addLayout(self._labeled_row("Strength metric:", self.combo_strength_metric))
+        vbox.addSpacing(6)
+        vbox.addWidget(QLabel("Measurement:"))
+        vbox.addWidget(self.btn_measure)
+        vbox.addWidget(self.measure_result)
+        vbox.addSpacing(6)
         vbox.addWidget(self.chk_zoom_participant)
         vbox.addLayout(self._labeled_row(None, self.btn_set_zoom_region,
                                          self.btn_reset_zoom_region, self.lbl_zoom_mode))
@@ -1609,6 +1729,7 @@ class MainWindow(QWidget):
         vbox.addWidget(self.chk_auto_expand_strength)
         vbox.addLayout(self._labeled_row("Disp. max:", self.slider_disp_scale, self.lbl_disp_scale_val))
         vbox.addLayout(self._labeled_row("Arc max:", self.slider_arc_scale, self.lbl_arc_scale_val))
+        vbox.addWidget(self.chk_speed_show_max)
         vbox.addWidget(self.chk_auto_expand_speed)
         vbox.addLayout(self._labeled_row("Speed max:", self.slider_speed_scale, self.lbl_speed_scale_val))
         vbox.addSpacing(6)
@@ -1665,6 +1786,7 @@ class MainWindow(QWidget):
         QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self.btn_swallow.toggle)
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self.btn_pause.click)
         QShortcut(QKeySequence("Ctrl+C"), self).activated.connect(self.btn_clear_trails.click)
+        QShortcut(QKeySequence("Ctrl+D"), self).activated.connect(self.btn_measure.toggle)
 
         # buttons / inputs
         self.btn_load.clicked.connect(self.on_load)
@@ -1684,6 +1806,8 @@ class MainWindow(QWidget):
         self.slider_circle_diam.valueChanged.connect(
             lambda v: self.lbl_circle_diam.setText(f"{v} px"))
         self.btn_swallow.toggled.connect(self.on_swallow_toggled)
+        self.btn_measure.toggled.connect(self.on_measure_toggled)
+        self.image_label.measure_points_ready.connect(self.on_measure_points)
         self.spin_swallow_n.valueChanged.connect(self.worker.set_n_swallow_display)
         self.chk_show_trails.toggled.connect(self.worker.set_show_swallow_trails)
         self.chk_show_participant_labels.toggled.connect(self.worker.set_show_participant_labels)
@@ -1695,6 +1819,7 @@ class MainWindow(QWidget):
         self.slider_disp_scale.valueChanged.connect(lambda v: self.lbl_disp_scale_val.setText(f"{v} px"))
         self.slider_arc_scale.valueChanged.connect(self.worker.set_strength_scale_arc_length)
         self.slider_arc_scale.valueChanged.connect(lambda v: self.lbl_arc_scale_val.setText(f"{v} px"))
+        self.chk_speed_show_max.toggled.connect(self.worker.set_speed_show_max)
         self.chk_auto_expand_speed.toggled.connect(self.worker.set_auto_expand_speed)
         self.slider_speed_scale.valueChanged.connect(self.worker.set_speed_scale_max)
         self.slider_speed_scale.valueChanged.connect(lambda v: self.lbl_speed_scale_val.setText(f"{v} px/s"))
@@ -1708,6 +1833,9 @@ class MainWindow(QWidget):
     # Display helpers
     # ------------------------------------------------------------------
     def _display_frame(self, frame):
+        self._measure_img_size = (frame.shape[1], frame.shape[0])
+        if self.measuring:      # experimenter view is frozen for measurement
+            return
         self.image_label.setPixmap(QPixmap.fromImage(bgr_to_qimage(frame)))
 
     @Slot()
@@ -1937,6 +2065,9 @@ class MainWindow(QWidget):
     # ------------------------------------------------------------------
     @Slot(QImage)
     def on_frame(self, qt_img):
+        self._measure_img_size = (qt_img.width(), qt_img.height())
+        if self.measuring:      # experimenter view is frozen for measurement
+            return
         pix = QPixmap.fromImage(qt_img).scaled(self.image_label.size(), Qt.KeepAspectRatio)
         disp_w = pix.width()
         disp_h = pix.height()
@@ -2046,6 +2177,63 @@ class MainWindow(QWidget):
             self.worker.end_swallow()
             self.btn_swallow.setText("Mark Swallow Start (Ctrl+S)")
             self.btn_swallow.setStyleSheet("")
+
+    # ------------------------------------------------------------------
+    # Point-to-point measurement
+    # ------------------------------------------------------------------
+    @Slot(bool)
+    def on_measure_toggled(self, checked):
+        if checked:
+            if self.selecting_roi:
+                self.btn_measure.setChecked(False)
+                return
+            pm = self.image_label.pixmap()
+            if pm is None or pm.isNull():
+                QMessageBox.information(self, "Measure",
+                                        "No frame to measure yet. Start the feed first.")
+                self.btn_measure.setChecked(False)
+                return
+            if self.chk_move_box.isChecked():   # avoid conflicting mouse handling
+                self.chk_move_box.setChecked(False)
+            self.measuring = True
+            self.measure_result.clear()
+            self.image_label.enter_measure_mode()
+            self.btn_measure.setText("Resume Live View (Ctrl+D)")
+            self.btn_measure.setStyleSheet("background-color: #2277cc; color: white; font-weight: bold;")
+            self.show_status("View frozen – click two points to measure the distance.")
+        else:
+            self.measuring = False
+            self.image_label.exit_measure_mode()
+            self.btn_measure.setText("Measure Distance (Ctrl+D)")
+            self.btn_measure.setStyleSheet("")
+            self.show_status("Live view resumed.")
+
+    @Slot(QPoint, QPoint)
+    def on_measure_points(self, p0, p1):
+        pm = self.image_label.pixmap()
+        if pm is None or pm.isNull():
+            return
+        pix_w, pix_h = pm.width(), pm.height()
+        # the pixmap is centered inside the fixed-size label (Qt.AlignCenter)
+        off_x = (self.image_label.width() - pix_w) / 2.0
+        off_y = (self.image_label.height() - pix_h) / 2.0
+        # map displayed-pixmap coords back to source-frame pixels
+        if self._measure_img_size is not None:
+            img_w, img_h = self._measure_img_size
+            sx = img_w / max(1, pix_w)
+            sy = img_h / max(1, pix_h)
+        else:
+            sx = sy = 1.0
+
+        def to_frame(p):
+            return (p.x() - off_x) * sx, (p.y() - off_y) * sy
+
+        x0, y0 = to_frame(p0)
+        x1, y1 = to_frame(p1)
+        dist = math.hypot(x1 - x0, y1 - y0)
+        self.measure_result.setText(f"Distance: {dist:.1f} px")
+        self.image_label.set_measure_text(f"{dist:.1f} px")
+        self.show_status(f"Distance: {dist:.1f} px  – click two new points to re-measure.")
 
     @Slot()
     def on_set_zoom_region(self):
