@@ -534,7 +534,7 @@ class VideoThread(QThread):
         self.secondary_manual_override = False
         self.secondary_img_w = 320
         self.secondary_img_h = 240
-        self.show_participant_labels = True
+        self.show_participant_labels = False
 
         # gradient box
         self.box_x_offset = 0
@@ -1606,7 +1606,7 @@ class MainWindow(QWidget):
         self.chk_show_box_main = QCheckBox("Show box on main view")
         self.chk_show_box_main.setChecked(True)
         self.chk_show_participant_labels = QCheckBox("Show participant labels")
-        self.chk_show_participant_labels.setChecked(True)
+        self.chk_show_participant_labels.setChecked(False)
         self.chk_show_participant_labels.setToolTip(
             "Show/hide scale marks, live/peak values, swallow count,\n"
             "metric label, and LIVE badge on the participant screen\n"
